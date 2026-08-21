@@ -184,12 +184,18 @@ export interface PlaceOrderMetadata {
 export interface ReservedOrderIdentity {
   orderId: string;
   clientOrderId: string;
+  riskReservationDone?: boolean;
 }
 
 export interface TradingRuntimeOptions {
   /** Delay between attempts to settle a PENDING_SUBMIT row whose submission outcome is unknown. */
   submitResolvePollMs?: number;
   submitResolveMaxAttempts?: number;
+  beforeCreateOrder?: (
+    order: z.infer<typeof CreateOrderInputSchema>,
+    identity: ReservedOrderIdentity,
+    metadata?: PlaceOrderMetadata,
+  ) => void;
 }
 
 export interface StrategyMarginLeg {
@@ -214,6 +220,7 @@ export class TradingRuntime {
   private readonly unmatchedPrivateEvents: Array<{ event: PrivateCrossExEvent; receivedAt: number }> = [];
   private readonly submitResolvePollMs: number;
   private readonly submitResolveMaxAttempts: number;
+  private readonly beforeCreateOrder: TradingRuntimeOptions['beforeCreateOrder'];
   private readonly remoteRefreshes = new Map<string, Promise<ExecutionOrder | null>>();
   private readonly cancelRequests = new Map<string, Promise<ExecutionOrder>>();
   private readonly preparedStatements = new Map<string, Database.Statement>();
@@ -227,6 +234,7 @@ export class TradingRuntime {
   ) {
     this.submitResolvePollMs = options.submitResolvePollMs ?? 2_500;
     this.submitResolveMaxAttempts = options.submitResolveMaxAttempts ?? 24;
+    this.beforeCreateOrder = options.beforeCreateOrder;
   }
 
   subscribe(listener: RuntimeListener): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -683,6 +691,11 @@ export class TradingRuntime {
 
   async createOrder(raw: unknown, metadata?: PlaceOrderMetadata, reserved?: ReservedOrderIdentity): Promise<ExecutionOrder> {
     const input = CreateOrderInputSchema.parse(raw);
+    const identity = reserved ?? {
+      orderId: randomUUID(),
+      clientOrderId: `gct-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    };
+    this.beforeCreateOrder?.(input, identity, metadata);
     if (!this.session.liveTradingEnabled && !metadata?.riskReducing) {
       throw new TradingRuntimeError('live_trading_locked', 403);
     }
@@ -690,12 +703,12 @@ export class TradingRuntime {
     if (!credentials) throw new TradingRuntimeError('credential_not_configured', 409);
     const tradingGateway = this.gateway as Partial<TradingCrossExGateway>;
     if (!tradingGateway.createOrder) throw new TradingRuntimeError('live_gateway_unavailable', 503);
-    const clientOrderId = reserved?.clientOrderId ?? `gct-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const clientOrderId = identity.clientOrderId;
     const gateInput = CrossExOrderRequestSchema.parse({ text: clientOrderId, symbol: input.symbol, side: input.side,
       type: input.type, time_in_force: input.timeInForce, qty: input.quantity, price: input.price,
       reduce_only: input.reduceOnly ? 'true' : 'false', position_side: input.positionSide });
     const now = new Date().toISOString();
-    const id = reserved?.orderId ?? randomUUID();
+    const id = identity.orderId;
     // The local row must exist before Gate can know about the order: a private push can beat the
     // REST response, and an ambiguous submit failure must stay visible for recovery instead of
     // leaving a live exchange order with no local record.

@@ -348,6 +348,8 @@ async function createTestApp(options: { liveTradingEnabled?: boolean; cloudPrevi
       GCT_EXECUTION_MODE: 'preview',
       GCT_ALLOW_LIVE_WRITES: '0',
       GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
+      GCT_CLOUD_ACCOUNT_ID: 'gate-default',
+      GCT_CLOUD_BOOTSTRAP_ADMIN: 'test-user',
     } : {}),
   });
   const database = openDatabase(config.databasePath, config.migrationsDir);
@@ -394,11 +396,12 @@ function catalogSymbol(symbol: string, venue: string): GateCrossExSymbol {
 
 function cloudHeaders(method: string, url: string, body: unknown, role: CloudRole, nonce: string): Record<string, string> {
   const identity = {
-    userId: 'test-user', role, timestamp: String(Date.now()), nonce, bodyHash: cloudBodyHash(body),
+    userId: 'test-user', role, accountId: 'gate-default', timestamp: String(Date.now()), nonce, bodyHash: cloudBodyHash(body),
   };
   return {
     'x-gct-user-id': identity.userId,
     'x-gct-role': identity.role,
+    'x-gct-account-id': identity.accountId,
     'x-gct-request-timestamp': identity.timestamp,
     'x-gct-nonce': identity.nonce,
     'x-gct-body-sha256': identity.bodyHash,
@@ -441,7 +444,7 @@ describe('local backend', () => {
       authenticatedTradingEnabled: false,
       tradingMode: 'unset',
       mode: 'live',
-      database: { migrationCount: 18, currentMigration: '0018_order_confirmation.sql' },
+      database: { migrationCount: 20, currentMigration: '0020_execution_risk_guard.sql' },
       security: {
         credentialStorage: 'memory_test_only',
         credentialEntryPath: '/secure/credentials',

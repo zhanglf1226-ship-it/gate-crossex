@@ -100,6 +100,7 @@ async function createHarness(script: GatewayScript = {}, options: TradingRuntime
   const runtime = new TradingRuntime(database, session, vault, gateway, {
     submitResolvePollMs: options.submitResolvePollMs ?? 10,
     submitResolveMaxAttempts: options.submitResolveMaxAttempts ?? 50,
+    beforeCreateOrder: options.beforeCreateOrder,
   });
   const harness = { database, runtime, gateway, directory };
   harnesses.push(harness);
@@ -229,6 +230,16 @@ describe('trading runtime order submission', () => {
     const { runtime } = await createHarness({}, { liveTradingEnabled: false });
     await expect(runtime.createOrder(marketOrderInput)).rejects.toMatchObject({ code: 'live_trading_locked' });
     expect(runtime.listOrders()).toHaveLength(0);
+  });
+
+  it('applies the injected execution guard before creating a local row or calling the gateway', async () => {
+    const denied = Object.assign(new Error('execution_kill_switch_active'), { code: 'execution_kill_switch_active' });
+    const { runtime, gateway } = await createHarness({}, {
+      beforeCreateOrder: () => { throw denied; },
+    });
+    await expect(runtime.createOrder(marketOrderInput)).rejects.toMatchObject({ code: 'execution_kill_switch_active' });
+    expect(runtime.listOrders()).toHaveLength(0);
+    expect(gateway.createRequests).toHaveLength(0);
   });
 });
 

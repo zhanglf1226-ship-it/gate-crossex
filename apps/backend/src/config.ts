@@ -11,6 +11,8 @@ export interface BackendConfig {
   cloudBffSecret: string | null;
   cloudAuthMaxSkewMs: number;
   cloudNonceTtlMs: number;
+  cloudDefaultAccountId: string | null;
+  cloudBootstrapAdminUserId: string | null;
   host: string;
   port: number;
   dataDir: string;
@@ -87,6 +89,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
   if (cloudNonceTtlMs < cloudAuthMaxSkewMs) {
     throw new Error('GCT_NONCE_TTL_MS must be greater than or equal to GCT_AUTH_MAX_SKEW_MS');
   }
+  const cloudDefaultAccountId = environment.GCT_CLOUD_ACCOUNT_ID?.trim() || null;
+  const cloudBootstrapAdminUserId = environment.GCT_CLOUD_BOOTSTRAP_ADMIN?.trim() || null;
+  if (deploymentMode === 'cloud' && (!cloudDefaultAccountId || !cloudBootstrapAdminUserId)) {
+    throw new Error('cloud deployment requires GCT_CLOUD_ACCOUNT_ID and GCT_CLOUD_BOOTSTRAP_ADMIN');
+  }
   const host = environment.GCT_HOST ?? '127.0.0.1';
   const port = parsePort(environment.PORT ?? environment.GCT_PORT ?? '17840', 'GCT_PORT');
   const frontendPort = parsePort(environment.GCT_FRONTEND_PORT ?? '5173', 'GCT_FRONTEND_PORT');
@@ -112,6 +119,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
     cloudBffSecret,
     cloudAuthMaxSkewMs,
     cloudNonceTtlMs,
+    cloudDefaultAccountId,
+    cloudBootstrapAdminUserId,
     host,
     port,
     dataDir,

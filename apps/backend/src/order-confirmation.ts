@@ -24,6 +24,9 @@ interface OrderPreviewRow {
   failure_code: string | null;
   consumed_at: string | null;
   updated_at: string;
+  account_id: string | null;
+  creator_user_id: string | null;
+  approver_user_id: string | null;
 }
 
 export class OrderConfirmationError extends Error {
@@ -33,17 +36,24 @@ export class OrderConfirmationError extends Error {
   }
 }
 
-function signaturePayload(preview: Pick<OrderPreview, 'previewId' | 'requestHash' | 'createdAt' | 'expiresAt' | 'canonicalOrder'>): string {
+type SignedPreview = Pick<OrderPreview, 'previewId' | 'requestHash' | 'createdAt' | 'expiresAt' | 'canonicalOrder'> & {
+  accountId: string | null;
+  creatorUserId: string | null;
+};
+
+function signaturePayload(preview: SignedPreview): string {
   return JSON.stringify({
     previewId: preview.previewId,
     requestHash: preview.requestHash,
     createdAt: preview.createdAt,
     expiresAt: preview.expiresAt,
     canonicalOrder: preview.canonicalOrder,
+    accountId: preview.accountId,
+    creatorUserId: preview.creatorUserId,
   });
 }
 
-function sign(secret: Buffer, preview: Pick<OrderPreview, 'previewId' | 'requestHash' | 'createdAt' | 'expiresAt' | 'canonicalOrder'>): string {
+function sign(secret: Buffer, preview: SignedPreview): string {
   return createHmac('sha256', secret).update(signaturePayload(preview)).digest('hex');
 }
 
@@ -59,14 +69,20 @@ export class OrderConfirmationStore {
     private readonly signingSecret: Buffer = randomBytes(32),
   ) {}
 
-  create(raw: unknown, now: Date = new Date()): OrderPreview {
+  create(raw: unknown, now: Date = new Date(), context?: { accountId: string; creatorUserId: string }): OrderPreview {
     const preview = buildOrderPreview(raw, now);
-    const signature = sign(this.signingSecret, preview);
+    const signature = sign(this.signingSecret, {
+      ...preview,
+      accountId: context?.accountId ?? null,
+      creatorUserId: context?.creatorUserId ?? null,
+    });
     this.database.prepare(`INSERT INTO order_previews
-      (id, request_hash, signature, canonical_order_json, created_at, expires_at, status, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)`)
+      (id, request_hash, signature, canonical_order_json, created_at, expires_at, status, updated_at,
+       account_id, creator_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)`)
       .run(preview.previewId, preview.requestHash, signature, JSON.stringify(preview.canonicalOrder),
-        preview.createdAt, preview.expiresAt, preview.createdAt);
+        preview.createdAt, preview.expiresAt, preview.createdAt,
+        context?.accountId ?? null, context?.creatorUserId ?? null);
     return preview;
   }
 
@@ -75,6 +91,13 @@ export class OrderConfirmationStore {
     idempotencyKey: string,
     runtime: TradingRuntime,
     now: Date = new Date(),
+    context?: {
+      accountId: string;
+      approverUserId: string;
+      enforceSeparation: boolean;
+      assertOrderAllowed?: (order: OrderPreview['canonicalOrder'], accountId: string) => void;
+      reserveDailyNotional?: (reservationId: string, sourceType: 'preview' | 'order', order: OrderPreview['canonicalOrder'], accountId: string, now: Date) => void;
+    },
   ): Promise<ExecutionOrder> {
     const canonicalKey = IdempotencyKeySchema.parse(idempotencyKey);
     const keyOwner = this.database.prepare(`SELECT id FROM order_previews WHERE idempotency_key = ? LIMIT 1`)
@@ -86,6 +109,15 @@ export class OrderConfirmationStore {
     const row = this.database.prepare('SELECT * FROM order_previews WHERE id = ?')
       .get(previewId) as OrderPreviewRow | undefined;
     if (!row) throw new OrderConfirmationError('order_preview_not_found', 404);
+    if (context) {
+      if (row.account_id !== context.accountId) throw new OrderConfirmationError('order_preview_account_mismatch', 403);
+      if (row.approver_user_id && row.approver_user_id !== context.approverUserId) {
+        throw new OrderConfirmationError('order_preview_approver_mismatch', 403);
+      }
+      if (context.enforceSeparation && row.creator_user_id === context.approverUserId) {
+        throw new OrderConfirmationError('maker_checker_separation_required', 403);
+      }
+    }
 
     let canonicalOrder: OrderPreview['canonicalOrder'];
     try {
@@ -99,6 +131,8 @@ export class OrderConfirmationStore {
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       canonicalOrder,
+      accountId: row.account_id,
+      creatorUserId: row.creator_user_id,
     };
     const expected = sign(this.signingSecret, material);
     const rebuilt = buildOrderPreview(canonicalOrder, new Date(row.created_at));
@@ -125,15 +159,20 @@ export class OrderConfirmationStore {
     if (new Date(row.expires_at).getTime() <= now.getTime()) {
       throw new OrderConfirmationError('order_preview_expired', 410);
     }
+    if (context?.assertOrderAllowed) context.assertOrderAllowed(canonicalOrder, context.accountId);
+    if (context?.reserveDailyNotional) {
+      context.reserveDailyNotional(`preview:${previewId}`, 'preview', canonicalOrder, context.accountId, now);
+    }
 
     const plannedOrderId = randomUUID();
     const plannedClientOrderId = `gct-${previewId.replaceAll('-', '').slice(0, 20)}`;
     let claimed: Database.RunResult;
     try {
       claimed = this.database.prepare(`UPDATE order_previews SET status = 'PROCESSING', idempotency_key = ?,
-        planned_order_id = ?, planned_client_order_id = ?, consumed_at = ?, updated_at = ?
+        planned_order_id = ?, planned_client_order_id = ?, approver_user_id = ?, consumed_at = ?, updated_at = ?
         WHERE id = ? AND status = 'PENDING' AND idempotency_key IS NULL`)
-        .run(canonicalKey, plannedOrderId, plannedClientOrderId, now.toISOString(), now.toISOString(), previewId);
+        .run(canonicalKey, plannedOrderId, plannedClientOrderId, context?.approverUserId ?? null,
+          now.toISOString(), now.toISOString(), previewId);
     } catch {
       const conflict = this.database.prepare('SELECT id FROM order_previews WHERE idempotency_key = ?')
         .get(canonicalKey) as { id: string } | undefined;
@@ -146,6 +185,7 @@ export class OrderConfirmationStore {
       const order = await runtime.createOrder(canonicalOrder, undefined, {
         orderId: plannedOrderId,
         clientOrderId: plannedClientOrderId,
+        riskReservationDone: Boolean(context?.reserveDailyNotional),
       });
       this.database.prepare(`UPDATE order_previews SET status = 'SUCCEEDED', execution_order_id = ?,
         updated_at = ? WHERE id = ?`).run(order.id, new Date().toISOString(), previewId);

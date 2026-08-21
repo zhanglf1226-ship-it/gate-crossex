@@ -75,31 +75,47 @@ The first Phase 2 increment adds a mandatory cloud order confirmation boundary:
 The second Phase 2 increment requires a signed portal/BFF identity for private cloud routes:
 
 - Cloud startup requires `GCT_BFF_HMAC_SECRET` with at least 32 characters.
-- The BFF signs method, URL, user ID, role, request timestamp, nonce and canonical body hash.
+- The BFF signs method, URL, user ID, role, account ID, request timestamp, nonce and canonical body hash.
 - Requests outside the clock window, with a modified body, invalid signature or reused nonce are rejected.
 - Roles are `viewer`, `planner`, `approver`, `admin` and `auditor`.
 - Order and target-state previews require planner/admin; confirmation requires approver/admin; trading-mode and credential changes require admin.
 - In cloud mode all `/api/**`, `/secure/**` and `/ws/stream` routes are private by default, except the explicit health, discovery and public-market allowlist.
 - The nonce replay store is process-local in this increment. The Fastify core must remain single-instance until it is replaced by an atomic shared store such as Redis or PostgreSQL.
 
-This increment does **not** make the cloud platform production-ready for live execution. Keep:
+## Phase 2 account, approval and execution-risk boundary
+
+The third Phase 2 increment adds the internal safety boundary needed for a preview-only deployment:
+
+- Every signed cloud request includes an `accountId`, which is bound to a persisted account grant and the configured credential profile.
+- This release intentionally supports one cloud Gate CrossEx credential profile. Unknown account IDs and profile mismatches fail closed; it must not be presented as multi-tenant account isolation.
+- Order previews persist account and creator identity. Confirmation must use the same account and a different approver identity.
+- Idempotent confirmation retries remain bound to the original approver.
+- Execution risk defaults to kill-switch enabled, close-only enabled and an empty symbol allowlist.
+- Risk checks enforce symbol allowlist, quantity, order notional and atomically reserved UTC daily notional.
+- The risk guard is injected at `TradingRuntime.createOrder`, so strategy and internal order paths cannot bypass it in cloud deployment mode.
+- Ordinary market orders remain disabled until the confirmation service can price them from a fresh trusted quote. Risk-reducing/reduce-only market orders may use the current persisted position mark with a 3% conservative buffer; missing marks fail closed.
+- Bootstrap administrator creation runs only when an account has no grants. Remove `GCT_CLOUD_BOOTSTRAP_ADMIN` from the service environment after first initialization.
+
+This increment makes a **preview-only cloud deployment** internally fail-closed, but does not authorize production live execution. Keep:
 
 ```env
 GCT_DEPLOYMENT_MODE=cloud
 GCT_EXECUTION_MODE=preview
 GCT_ALLOW_LIVE_WRITES=0
 GCT_BFF_HMAC_SECRET=<secret-manager-reference>
+GCT_CLOUD_ACCOUNT_ID=<single-account-id>
+GCT_CLOUD_BOOTSTRAP_ADMIN=<one-time-bootstrap-user>
 ```
 
 ## Required before live execution
 
 1. Connect the trusted BFF identity to real OIDC authentication with MFA.
 2. Server-side sessions and CSRF protection at the portal/BFF layer.
-3. Persist actor roles and approval policy instead of accepting roles solely from the BFF assertion.
-4. Account ownership and scope on every private API and WebSocket subscription.
-5. Cloud secret manager integration; no public credential-entry page.
-6. Risk policies: order, daily, position, symbol, venue, leverage and drawdown limits.
-7. Bind persisted confirmations to authenticated actor, account and approval policy.
-8. Kill switch and close-only mode.
-9. Actor/account/request-aware tamper-evident audit trail.
-10. Independent security review and canary rollout.
+3. Source user roles and account grants from the OIDC/session identity layer rather than bootstrap configuration.
+4. Replace the single credential profile with account-scoped secret-manager references before claiming multi-account support.
+5. Cloud secret manager integration; disable the local credential-entry page in cloud mode.
+6. Add position, leverage, venue and drawdown limits; price market orders from fresh trusted quotes.
+7. Replace in-memory nonce storage and SQLite risk reservations with shared PostgreSQL/Redis primitives before multi-instance deployment.
+8. Extend actor/account/request-aware audit coverage to every private read and write operation.
+9. Add tamper-evident audit chaining and immutable off-host retention.
+10. Independent security review, OIDC/MFA penetration test and preview-only canary rollout before any live unlock.

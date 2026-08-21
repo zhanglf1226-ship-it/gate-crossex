@@ -70,6 +70,8 @@ import { TradingSession } from './trading-session.js';
 import { TradingRuntime, TradingRuntimeError } from './trading-runtime.js';
 import { OrderConfirmationError, OrderConfirmationStore } from './order-confirmation.js';
 import { CloudAuthError, CloudRequestAuthenticator, type CloudPrincipal, type CloudRole } from './cloud-auth.js';
+import { AccountOwnershipError, AccountOwnershipStore } from './account-ownership.js';
+import { ExecutionRiskError, ExecutionRiskGuard, ExecutionRiskPolicySchema } from './execution-risk.js';
 import { buildTargetStatePreview } from './target-state-preview.js';
 import { CrossExPrivateStream } from './private-stream.js';
 import { LivePortfolioStore, type LivePortfolioSnapshot } from './live-portfolio.js';
@@ -453,7 +455,21 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const { config, database, credentialVault, crossExGateway, publicMarketGateway } = options;
   const marketHub = options.marketHub ?? new CrossExMarketHub(config.gatePublicWebSocketUrl);
   const tradingSession = options.tradingSession ?? new TradingSession();
-  const tradingRuntime = new TradingRuntime(database, tradingSession, credentialVault, crossExGateway);
+  const accountOwnership = new AccountOwnershipStore(database);
+  const executionRisk = new ExecutionRiskGuard(database);
+  const tradingRuntime = new TradingRuntime(database, tradingSession, credentialVault, crossExGateway, {
+    beforeCreateOrder: config.deploymentMode === 'cloud'
+      ? (order, identity, metadata) => {
+        const rawCanonicalOrder = { ...order, price: order.price ?? null };
+        const canonicalOrder = executionRisk.priceOrder(rawCanonicalOrder, Boolean(metadata?.riskReducing));
+        const accountId = config.cloudDefaultAccountId ?? '';
+        executionRisk.assertOrderAllowed(canonicalOrder, accountId);
+        if (!identity.riskReservationDone) {
+          executionRisk.reserveDailyNotional(`order:${identity.orderId}`, 'order', canonicalOrder, accountId);
+        }
+      }
+      : undefined,
+  });
   const orderConfirmations = new OrderConfirmationStore(
     database,
     config.orderConfirmationSecret ? Buffer.from(config.orderConfirmationSecret, 'utf8') : undefined,
@@ -461,6 +477,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const cloudAuthenticator = config.deploymentMode === 'cloud' && config.cloudBffSecret
     ? new CloudRequestAuthenticator(config.cloudBffSecret, config.cloudAuthMaxSkewMs, config.cloudNonceTtlMs)
     : null;
+  if (config.cloudDefaultAccountId && config.cloudBootstrapAdminUserId) {
+    accountOwnership.seedAccount(
+      config.cloudDefaultAccountId,
+      'Default Gate CrossEx Account',
+      DEFAULT_CREDENTIAL_PROFILE,
+      config.cloudBootstrapAdminUserId,
+    );
+  }
   const privateStream = new CrossExPrivateStream(config.gatePrivateWebSocketUrl, credentialVault);
   const cachedPortfolioAtBoot = readLatestPortfolioSnapshot(database);
   const livePortfolio = new LivePortfolioStore(
@@ -875,9 +899,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const requireCloudRoles = (allowedRoles: readonly CloudRole[]) => async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const principal = authenticateCloudRequest(request);
-      if (principal) cloudAuthenticator?.authorize(principal, allowedRoles);
+      if (principal) {
+        cloudAuthenticator?.authorize(principal, allowedRoles);
+        accountOwnership.requireAccess(principal.userId, principal.role, principal.accountId);
+        accountOwnership.requireCredentialProfile(principal.accountId, DEFAULT_CREDENTIAL_PROFILE);
+      }
     } catch (error) {
-      if (error instanceof CloudAuthError) return reply.code(error.statusCode).send({ error: error.code });
+      if (error instanceof CloudAuthError || error instanceof AccountOwnershipError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
       request.log.error({ error }, 'cloud identity verification failed');
       return reply.code(500).send({ error: 'cloud_identity_verification_failed' });
     }
@@ -1056,6 +1086,29 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
   }, async () => tradingRuntime.snapshot());
 
+  app.get('/api/v1/risk/execution-policy', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async () => ({ policy: executionRisk.read() }));
+
+  app.put('/api/v1/risk/execution-policy', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    preHandler: requireCloudRoles(['admin']),
+  }, async (request, reply) => {
+    const parsed = ExecutionRiskPolicySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_execution_risk_policy' });
+    const actor = cloudPrincipals.get(request);
+    const policy = executionRisk.update(parsed.data, actor?.userId ?? 'local-admin');
+    addAuditEvent(database, 'execution_risk_policy_changed', {
+      actorUserId: actor?.userId ?? null,
+      actorRole: actor?.role ?? null,
+      accountId: actor?.accountId ?? null,
+      killSwitch: policy.killSwitch,
+      closeOnly: policy.closeOnly,
+      allowedSymbolCount: policy.allowedSymbols.length,
+    });
+    return { policy };
+  });
+
   app.post('/api/v1/trading/order-previews', {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
     preHandler: [requireCloudRoles(['planner', 'admin']), async (request, reply) => {
@@ -1065,8 +1118,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }],
   }, async (request, reply) => {
     try {
-      const preview = orderConfirmations.create(request.body);
       const actor = cloudPrincipals.get(request);
+      const preview = orderConfirmations.create(request.body, new Date(), actor ? {
+        accountId: actor.accountId,
+        creatorUserId: actor.userId,
+      } : undefined);
       addAuditEvent(database, 'order_preview_created', {
         previewId: preview.previewId,
         actorUserId: actor?.userId ?? null,
@@ -1187,8 +1243,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       return reply.code(400).send({ error: 'invalid_order_confirmation' });
     }
     try {
-      const order = await orderConfirmations.confirm(params.data.previewId, idempotencyKey, tradingRuntime);
       const actor = cloudPrincipals.get(request);
+      const order = await orderConfirmations.confirm(params.data.previewId, idempotencyKey, tradingRuntime,
+        new Date(), actor ? {
+          accountId: actor.accountId,
+          approverUserId: actor.userId,
+          enforceSeparation: true,
+          assertOrderAllowed: (canonicalOrder, accountId) => executionRisk.assertOrderAllowed(canonicalOrder, accountId),
+          reserveDailyNotional: (reservationId, sourceType, canonicalOrder, accountId, now) =>
+            executionRisk.reserveDailyNotional(reservationId, sourceType, canonicalOrder, accountId, now),
+        } : undefined);
       addAuditEvent(database, 'order_preview_confirmed', {
         previewId: params.data.previewId,
         actorUserId: actor?.userId ?? null,
@@ -1199,7 +1263,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       return order;
     } catch (error) {
       if (error instanceof z.ZodError) return reply.code(400).send({ error: 'invalid_idempotency_key' });
-      if (error instanceof OrderConfirmationError) return reply.code(error.statusCode).send({ error: error.code });
+      if (error instanceof OrderConfirmationError || error instanceof ExecutionRiskError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
       if (error instanceof TradingRuntimeError) return reply.code(error.statusCode).send({ error: error.code });
       if (error instanceof GateApiError) return reply.code(error.statusCode > 0 ? 502 : 503).send({ error: 'gate_order_rejected', label: error.label });
       request.log.error({ error }, 'order confirmation failed');

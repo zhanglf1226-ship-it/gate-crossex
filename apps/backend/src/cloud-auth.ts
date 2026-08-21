@@ -7,6 +7,7 @@ export type CloudRole = z.infer<typeof CloudRoleSchema>;
 export interface CloudPrincipal {
   userId: string;
   role: CloudRole;
+  accountId: string;
 }
 
 export interface CloudAuthRequest {
@@ -40,6 +41,7 @@ export function cloudBodyHash(body: unknown): string {
 export interface CloudIdentityHeaders {
   userId: string;
   role: CloudRole;
+  accountId: string;
   timestamp: string;
   nonce: string;
   bodyHash: string;
@@ -52,7 +54,7 @@ export function cloudCanonicalRequest(
   identity: Omit<CloudIdentityHeaders, 'signature'>,
 ): string {
   return [
-    'GCT1', method.toUpperCase(), url, identity.userId, identity.role,
+    'GCT1', method.toUpperCase(), url, identity.userId, identity.role, identity.accountId,
     identity.timestamp, identity.nonce, identity.bodyHash,
   ].join('\n');
 }
@@ -85,14 +87,16 @@ export class CloudRequestAuthenticator {
     this.pruneNonces(now.getTime());
     const userId = oneHeader(request.headers, 'x-gct-user-id');
     const rawRole = oneHeader(request.headers, 'x-gct-role');
+    const accountId = oneHeader(request.headers, 'x-gct-account-id');
     const timestamp = oneHeader(request.headers, 'x-gct-request-timestamp');
     const nonce = oneHeader(request.headers, 'x-gct-nonce');
     const bodyHash = oneHeader(request.headers, 'x-gct-body-sha256');
     const signature = oneHeader(request.headers, 'x-gct-signature');
-    if (!userId || !rawRole || !timestamp || !nonce || !bodyHash || !signature) {
+    if (!userId || !rawRole || !accountId || !timestamp || !nonce || !bodyHash || !signature) {
       throw new CloudAuthError('cloud_identity_required', 401);
     }
     if (!/^[A-Za-z0-9._:@-]{1,128}$/.test(userId)) throw new CloudAuthError('invalid_cloud_identity', 401);
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(accountId)) throw new CloudAuthError('invalid_cloud_account', 401);
     const role = CloudRoleSchema.safeParse(rawRole);
     if (!role.success) throw new CloudAuthError('invalid_cloud_role', 403);
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) throw new CloudAuthError('invalid_cloud_nonce', 401);
@@ -103,7 +107,7 @@ export class CloudRequestAuthenticator {
     const actualBodyHash = cloudBodyHash(request.body);
     if (bodyHash !== actualBodyHash) throw new CloudAuthError('cloud_body_hash_mismatch', 401);
     const expected = signCloudRequest(this.secret, request.method, request.url, {
-      userId, role: role.data, timestamp, nonce, bodyHash,
+      userId, role: role.data, accountId, timestamp, nonce, bodyHash,
     });
     const expectedBytes = Buffer.from(expected);
     const actualBytes = Buffer.from(signature);
@@ -114,7 +118,7 @@ export class CloudRequestAuthenticator {
     if (this.usedNonces.has(nonceKey)) throw new CloudAuthError('cloud_request_replayed', 409);
     if (this.usedNonces.size >= this.maxNonceEntries) throw new CloudAuthError('cloud_nonce_capacity_exceeded', 503);
     this.usedNonces.set(nonceKey, now.getTime() + this.nonceTtlMs);
-    return { userId, role: role.data };
+    return { userId, role: role.data, accountId };
   }
 
   authorize(principal: CloudPrincipal, allowedRoles: readonly CloudRole[]): void {

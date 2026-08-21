@@ -113,6 +113,25 @@ describe('OrderConfirmationStore', () => {
     database.close();
   });
 
+  it('binds previews to an account and prohibits self-approval', async () => {
+    const { database, store } = testStore();
+    const preview = store.create(rawOrder, new Date('2026-08-21T07:00:00.000Z'), {
+      accountId: 'gate-main', creatorUserId: 'planner-user',
+    });
+    const runtime = { createOrder: vi.fn() } as unknown as TradingRuntime;
+
+    await expect(store.confirm(preview.previewId, 'order-confirmation-0006', runtime,
+      new Date('2026-08-21T07:00:10.000Z'), {
+        accountId: 'gate-other', approverUserId: 'approver-user', enforceSeparation: true,
+      })).rejects.toMatchObject({ code: 'order_preview_account_mismatch', statusCode: 403 });
+    await expect(store.confirm(preview.previewId, 'order-confirmation-0007', runtime,
+      new Date('2026-08-21T07:00:10.000Z'), {
+        accountId: 'gate-main', approverUserId: 'planner-user', enforceSeparation: true,
+      })).rejects.toMatchObject({ code: 'maker_checker_separation_required', statusCode: 403 });
+    expect(runtime.createOrder).not.toHaveBeenCalled();
+    database.close();
+  });
+
   it('rejects reuse of an idempotency key for another preview', async () => {
     const { database, store } = testStore();
     const first = store.create(rawOrder, new Date('2026-08-21T07:00:00.000Z'));

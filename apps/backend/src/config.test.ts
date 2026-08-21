@@ -6,6 +6,8 @@ describe('cloud execution configuration', () => {
     const config = loadConfig({
       GCT_DEPLOYMENT_MODE: 'cloud',
       GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
+      GCT_CLOUD_ACCOUNT_ID: 'gate-default',
+      GCT_CLOUD_BOOTSTRAP_ADMIN: 'felix',
     });
     expect(config.deploymentMode).toBe('cloud');
     expect(config.executionMode).toBe('preview');
@@ -40,17 +42,28 @@ describe('cloud execution configuration', () => {
       .toThrow('GCT_BFF_HMAC_SECRET must contain at least 32 characters');
   });
 
+  it('requires an explicit cloud account and bootstrap administrator', () => {
+    expect(() => loadConfig({
+      GCT_DEPLOYMENT_MODE: 'cloud',
+      GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
+    })).toThrow('cloud deployment requires GCT_CLOUD_ACCOUNT_ID and GCT_CLOUD_BOOTSTRAP_ADMIN');
+  });
+
   it('requires a durable confirmation secret before cloud live execution', () => {
     expect(() => loadConfig({
       GCT_DEPLOYMENT_MODE: 'cloud',
       GCT_EXECUTION_MODE: 'live',
       GCT_ALLOW_LIVE_WRITES: '1',
       GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
+      GCT_CLOUD_ACCOUNT_ID: 'gate-default',
+      GCT_CLOUD_BOOTSTRAP_ADMIN: 'felix',
     })).toThrow('cloud live execution requires GCT_ORDER_CONFIRMATION_SECRET');
     expect(() => loadConfig({
       GCT_DEPLOYMENT_MODE: 'cloud',
       GCT_ORDER_CONFIRMATION_SECRET: 'too-short',
       GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
+      GCT_CLOUD_ACCOUNT_ID: 'gate-default',
+      GCT_CLOUD_BOOTSTRAP_ADMIN: 'felix',
     })).toThrow('GCT_ORDER_CONFIRMATION_SECRET must contain at least 32 characters');
   });
 });
