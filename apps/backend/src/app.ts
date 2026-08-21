@@ -37,7 +37,6 @@ import type {
   FundingHistoryResponse,
   FundingHistorySeriesResponse,
   FundingOverviewResponse,
-  HealthResponse,
   MarketCatalogAsset,
   MarketCatalogResponse,
   MarketCatalogVenue,
@@ -46,7 +45,6 @@ import type {
   ReconciliationReportList,
   PublicMarketSnapshotResponse,
   ReadOnlyAccountSummary,
-  SystemDiscovery,
   VenueFeeRatesResponse,
 } from '@gate-crossex/shared-types';
 import type { BackendConfig } from './config.js';
@@ -940,25 +938,31 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     return requireCloudRoles(defaultCloudRoles(request))(request, reply);
   });
 
-  app.get('/health', async (): Promise<HealthResponse> => {
+  app.get('/health', async () => {
     const databaseStatus = readDatabaseStatus(database);
     return {
       ok: databaseStatus.state === 'ok',
       version: process.env.npm_package_version ?? '0.1.0',
       environment: 'live',
+      deploymentMode: config.deploymentMode,
+      executionMode: config.executionMode,
+      liveWritesAllowed: config.allowLiveWrites,
       database: databaseStatus.state,
       apiDocsRetrievedAt: API_DOCS_RETRIEVED_AT,
       connectionState: databaseStatus.state === 'ok' ? marketHub.snapshot().connectionState === 'disconnected' ? 'healthy' : marketHub.snapshot().connectionState : 'degraded',
     };
   });
 
-  app.get('/api/system/discovery', async (): Promise<SystemDiscovery> => {
+  app.get('/api/system/discovery', async () => {
     const databaseStatus = readDatabaseStatus(database);
     return {
-      product: 'Gate CrossEx Local Trading Terminal',
+      product: config.deploymentMode === 'cloud' ? 'Gate CrossEx Cloud Preview Platform' : 'Gate CrossEx Local Trading Terminal',
       mode: 'live',
-      authenticatedTradingEnabled: tradingSession.liveTradingEnabled,
+      authenticatedTradingEnabled: config.executionMode === 'live' && config.allowLiveWrites && tradingSession.liveTradingEnabled,
       tradingMode: tradingSession.current,
+      deploymentMode: config.deploymentMode,
+      executionMode: config.executionMode,
+      liveWritesAllowed: config.allowLiveWrites,
       docs: { apiVersion: API_DOCS_VERSION, retrievedAt: API_DOCS_RETRIEVED_AT },
       database: {
         migrationCount: databaseStatus.migrationCount,
@@ -966,7 +970,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       },
       security: {
         credentialStorage: storedCredentialProvider(getCredentialMetadata(database, DEFAULT_CREDENTIAL_PROFILE)?.provider, credentialVault.provider),
-        credentialEntryPath: '/secure/credentials',
+        credentialEntryPath: config.deploymentMode === 'cloud' ? null : '/secure/credentials',
         browserJavaScriptHandlesSecrets: false,
       },
     };
@@ -2284,6 +2288,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   app.get('/secure/credentials', async (request, reply) => {
+    if (config.deploymentMode === 'cloud') return reply.code(404).send({ error: 'credential_entry_unavailable' });
     const liveTradingIntent = hasLiveTradingCredentialIntent(request.query);
     const language = secureCredentialLanguage(request.query);
     const metadata = getCredentialMetadata(database, DEFAULT_CREDENTIAL_PROFILE);
@@ -2301,6 +2306,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   app.post('/secure/credentials', async (request, reply) => {
+    if (config.deploymentMode === 'cloud') return reply.code(404).send({ error: 'credential_entry_unavailable' });
     const parsed = CredentialFormSchema.safeParse(request.body);
     const liveTradingIntent = hasLiveTradingCredentialIntent(request.body);
     const language = secureCredentialLanguage(request.body);
@@ -2406,6 +2412,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   app.post('/secure/credentials/delete', async (request, reply) => {
+    if (config.deploymentMode === 'cloud') return reply.code(404).send({ error: 'credential_entry_unavailable' });
     const parsed = DeleteCredentialFormSchema.safeParse(request.body);
     const language = secureCredentialLanguage(request.body);
     if (!parsed.success || !csrfTokens.consume(parsed.data.csrfToken)) {
