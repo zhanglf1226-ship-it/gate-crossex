@@ -58,6 +58,26 @@ Internet
 
 The Fastify backend must remain loopback/private. Do not publish port `17840` directly to the Internet.
 
+## Phase 2 execution-confirmation foundation
+
+The first Phase 2 increment adds a mandatory cloud order confirmation boundary:
+
+- `order_previews` persists the canonical order, request hash, HMAC signature, expiry and status.
+- `POST /api/v1/trading/order-previews/:previewId/confirm` requires an `Idempotency-Key` and a confirmation intent header.
+- Confirmation rejects missing, expired, modified, already-consumed and conflicting previews before reaching the trading gateway.
+- Successful retries with the same idempotency key return the existing execution order rather than submitting again.
+- Direct `POST /api/trading/orders` remains available to the local desktop deployment, but cloud deployments return `428 order_preview_required`.
+- Cloud live execution additionally requires a durable `GCT_ORDER_CONFIRMATION_SECRET` containing at least 32 characters.
+- Preview mode remains non-executable: confirmation is denied before any exchange write call.
+
+This increment does **not** make the cloud platform production-ready for live execution. Keep:
+
+```env
+GCT_DEPLOYMENT_MODE=cloud
+GCT_EXECUTION_MODE=preview
+GCT_ALLOW_LIVE_WRITES=0
+```
+
 ## Required before live execution
 
 1. Unified user authentication with MFA.
@@ -66,7 +86,7 @@ The Fastify backend must remain loopback/private. Do not publish port `17840` di
 4. Account ownership and scope on every private API and WebSocket subscription.
 5. Cloud secret manager integration; no public credential-entry page.
 6. Risk policies: order, daily, position, symbol, venue, leverage and drawdown limits.
-7. Server-side preview/confirm flow with expiration, idempotency and replay rejection.
+7. Bind persisted confirmations to authenticated actor, account and approval policy.
 8. Kill switch and close-only mode.
 9. Actor/account/request-aware tamper-evident audit trail.
 10. Independent security review and canary rollout.

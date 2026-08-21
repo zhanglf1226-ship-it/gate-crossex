@@ -425,7 +425,7 @@ describe('local backend', () => {
       authenticatedTradingEnabled: false,
       tradingMode: 'unset',
       mode: 'live',
-      database: { migrationCount: 17, currentMigration: '0017_hyperliquid_perp_metadata.sql' },
+      database: { migrationCount: 18, currentMigration: '0018_order_confirmation.sql' },
       security: {
         credentialStorage: 'memory_test_only',
         credentialEntryPath: '/secure/credentials',
@@ -559,6 +559,18 @@ describe('local backend', () => {
     expect(preview.statusCode).toBe(201);
     expect(preview.json()).toMatchObject({ executionAllowed: false, mode: 'preview_only' });
 
+    const deniedConfirmation = await app.inject({
+      method: 'POST',
+      url: `/api/v1/trading/order-previews/${preview.json().previewId}/confirm`,
+      headers: {
+        ...host,
+        'x-gct-trading-intent': 'confirm-order',
+        'idempotency-key': 'cloud-preview-confirmation-0001',
+      },
+    });
+    expect(deniedConfirmation.statusCode).toBe(403);
+    expect(deniedConfirmation.json()).toEqual({ error: 'live_execution_disabled' });
+
     const targetPreview = await app.inject({
       method: 'POST',
       url: '/api/v1/strategies/target-state-previews',
@@ -579,8 +591,11 @@ describe('local backend', () => {
       headers: { ...host, 'x-gct-trading-intent': 'place-order' },
       payload: { symbol: 'BINANCE_FUTURE_BTC_USDT', side: 'BUY', type: 'MARKET', timeInForce: 'IOC', quantity: '0.01', reduceOnly: false },
     });
-    expect(deniedOrder.statusCode).toBe(403);
-    expect(deniedOrder.json()).toEqual({ error: 'live_execution_disabled' });
+    expect(deniedOrder.statusCode).toBe(428);
+    expect(deniedOrder.json()).toEqual({
+      error: 'order_preview_required',
+      previewEndpoint: '/api/v1/trading/order-previews',
+    });
     expect(gateway.createdOrders).toEqual([]);
   });
 

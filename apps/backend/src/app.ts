@@ -68,7 +68,7 @@ import { CrossExMarketHub, CANDLE_INTERVALS, type MarketDefinition, type MarketH
 import { StrategyEngine, StrategyEngineError } from './strategy-engine.js';
 import { TradingSession } from './trading-session.js';
 import { TradingRuntime, TradingRuntimeError } from './trading-runtime.js';
-import { buildOrderPreview } from './order-preview.js';
+import { OrderConfirmationError, OrderConfirmationStore } from './order-confirmation.js';
 import { buildTargetStatePreview } from './target-state-preview.js';
 import { CrossExPrivateStream } from './private-stream.js';
 import { LivePortfolioStore, type LivePortfolioSnapshot } from './live-portfolio.js';
@@ -451,6 +451,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const marketHub = options.marketHub ?? new CrossExMarketHub(config.gatePublicWebSocketUrl);
   const tradingSession = options.tradingSession ?? new TradingSession();
   const tradingRuntime = new TradingRuntime(database, tradingSession, credentialVault, crossExGateway);
+  const orderConfirmations = new OrderConfirmationStore(
+    database,
+    config.orderConfirmationSecret ? Buffer.from(config.orderConfirmationSecret, 'utf8') : undefined,
+  );
   const privateStream = new CrossExPrivateStream(config.gatePrivateWebSocketUrl, credentialVault);
   const cachedPortfolioAtBoot = readLatestPortfolioSnapshot(database);
   const livePortfolio = new LivePortfolioStore(
@@ -1000,7 +1004,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     },
   }, async (request, reply) => {
     try {
-      const preview = buildOrderPreview(request.body);
+      const preview = orderConfirmations.create(request.body);
       addAuditEvent(database, 'order_preview_created', {
         previewId: preview.previewId,
         requestHash: preview.requestHash,
@@ -1101,12 +1105,53 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
   });
 
+  app.post('/api/v1/trading/order-previews/:previewId/confirm', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    preHandler: async (request, reply) => {
+      if (request.headers['x-gct-trading-intent'] !== 'confirm-order') {
+        return reply.code(403).send({ error: 'missing_confirmation_intent' });
+      }
+    },
+  }, async (request, reply) => {
+    if (config.executionMode !== 'live' || !config.allowLiveWrites) {
+      addAuditEvent(database, 'live_execution_denied', { action: 'confirm_order', reason: 'preview_only_mode' });
+      return reply.code(403).send({ error: 'live_execution_disabled' });
+    }
+    const params = z.object({ previewId: z.string().uuid() }).safeParse(request.params);
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (!params.success || typeof idempotencyKey !== 'string') {
+      return reply.code(400).send({ error: 'invalid_order_confirmation' });
+    }
+    try {
+      const order = await orderConfirmations.confirm(params.data.previewId, idempotencyKey, tradingRuntime);
+      addAuditEvent(database, 'order_preview_confirmed', {
+        previewId: params.data.previewId,
+        executionOrderId: order.id,
+        clientOrderId: order.clientOrderId,
+      });
+      return order;
+    } catch (error) {
+      if (error instanceof z.ZodError) return reply.code(400).send({ error: 'invalid_idempotency_key' });
+      if (error instanceof OrderConfirmationError) return reply.code(error.statusCode).send({ error: error.code });
+      if (error instanceof TradingRuntimeError) return reply.code(error.statusCode).send({ error: error.code });
+      if (error instanceof GateApiError) return reply.code(error.statusCode > 0 ? 502 : 503).send({ error: 'gate_order_rejected', label: error.label });
+      request.log.error({ error }, 'order confirmation failed');
+      return reply.code(500).send({ error: 'order_confirmation_failed' });
+    }
+  });
+
   app.post('/api/trading/orders', {
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     preHandler: async (request, reply) => {
       if (request.headers['x-gct-trading-intent'] !== 'place-order') return reply.code(403).send({ error: 'missing_trading_intent' });
     },
   }, async (request, reply) => {
+    if (config.deploymentMode === 'cloud') {
+      return reply.code(428).send({
+        error: 'order_preview_required',
+        previewEndpoint: '/api/v1/trading/order-previews',
+      });
+    }
     if (config.executionMode !== 'live' || !config.allowLiveWrites) {
       addAuditEvent(database, 'live_execution_denied', { action: 'create_order', reason: 'preview_only_mode' });
       return reply.code(403).send({ error: 'live_execution_disabled' });

@@ -7,6 +7,7 @@ export interface BackendConfig {
   deploymentMode: 'local' | 'cloud';
   executionMode: 'preview' | 'live';
   allowLiveWrites: boolean;
+  orderConfirmationSecret: string | null;
   host: string;
   port: number;
   dataDir: string;
@@ -39,6 +40,10 @@ function parsePort(value: string, name: string): number {
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): BackendConfig {
+  if (environment.GCT_DEPLOYMENT_MODE
+    && !['local', 'cloud'].includes(environment.GCT_DEPLOYMENT_MODE)) {
+    throw new Error('GCT_DEPLOYMENT_MODE must be local or cloud');
+  }
   const deploymentMode = environment.GCT_DEPLOYMENT_MODE === 'cloud' ? 'cloud' : 'local';
   const defaultExecutionMode = deploymentMode === 'cloud' ? 'preview' : 'live';
   const executionMode = environment.GCT_EXECUTION_MODE === 'preview'
@@ -49,6 +54,13 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
   const allowLiveWrites = parseBoolean(environment.GCT_ALLOW_LIVE_WRITES, deploymentMode === 'local');
   if (deploymentMode === 'cloud' && executionMode === 'live' && !allowLiveWrites) {
     throw new Error('cloud live execution requires GCT_ALLOW_LIVE_WRITES=1');
+  }
+  const orderConfirmationSecret = environment.GCT_ORDER_CONFIRMATION_SECRET?.trim() || null;
+  if (orderConfirmationSecret && orderConfirmationSecret.length < 32) {
+    throw new Error('GCT_ORDER_CONFIRMATION_SECRET must contain at least 32 characters');
+  }
+  if (deploymentMode === 'cloud' && executionMode === 'live' && !orderConfirmationSecret) {
+    throw new Error('cloud live execution requires GCT_ORDER_CONFIRMATION_SECRET');
   }
   const host = environment.GCT_HOST ?? '127.0.0.1';
   const port = parsePort(environment.PORT ?? environment.GCT_PORT ?? '17840', 'GCT_PORT');
@@ -71,6 +83,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
     deploymentMode,
     executionMode,
     allowLiveWrites,
+    orderConfirmationSecret,
     host,
     port,
     dataDir,
