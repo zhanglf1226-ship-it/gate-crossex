@@ -8,6 +8,9 @@ export interface BackendConfig {
   executionMode: 'preview' | 'live';
   allowLiveWrites: boolean;
   orderConfirmationSecret: string | null;
+  cloudBffSecret: string | null;
+  cloudAuthMaxSkewMs: number;
+  cloudNonceTtlMs: number;
   host: string;
   port: number;
   dataDir: string;
@@ -39,6 +42,13 @@ function parsePort(value: string, name: string): number {
   return port;
 }
 
+function parsePositiveInteger(value: string | undefined, fallback: number, name: string): number {
+  if (value === undefined || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer`);
+  return parsed;
+}
+
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): BackendConfig {
   if (environment.GCT_DEPLOYMENT_MODE
     && !['local', 'cloud'].includes(environment.GCT_DEPLOYMENT_MODE)) {
@@ -62,6 +72,21 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
   if (deploymentMode === 'cloud' && executionMode === 'live' && !orderConfirmationSecret) {
     throw new Error('cloud live execution requires GCT_ORDER_CONFIRMATION_SECRET');
   }
+  const cloudBffSecret = environment.GCT_BFF_HMAC_SECRET?.trim() || null;
+  if (cloudBffSecret && cloudBffSecret.length < 32) {
+    throw new Error('GCT_BFF_HMAC_SECRET must contain at least 32 characters');
+  }
+  if (deploymentMode === 'cloud' && !cloudBffSecret) {
+    throw new Error('cloud deployment requires GCT_BFF_HMAC_SECRET');
+  }
+  const cloudAuthMaxSkewMs = parsePositiveInteger(environment.GCT_AUTH_MAX_SKEW_MS, 60_000, 'GCT_AUTH_MAX_SKEW_MS');
+  const cloudNonceTtlMs = parsePositiveInteger(environment.GCT_NONCE_TTL_MS, 5 * 60_000, 'GCT_NONCE_TTL_MS');
+  if (cloudAuthMaxSkewMs > 5 * 60_000 || cloudNonceTtlMs > 60 * 60_000) {
+    throw new Error('cloud authentication time windows exceed safe limits');
+  }
+  if (cloudNonceTtlMs < cloudAuthMaxSkewMs) {
+    throw new Error('GCT_NONCE_TTL_MS must be greater than or equal to GCT_AUTH_MAX_SKEW_MS');
+  }
   const host = environment.GCT_HOST ?? '127.0.0.1';
   const port = parsePort(environment.PORT ?? environment.GCT_PORT ?? '17840', 'GCT_PORT');
   const frontendPort = parsePort(environment.GCT_FRONTEND_PORT ?? '5173', 'GCT_FRONTEND_PORT');
@@ -84,6 +109,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
     executionMode,
     allowLiveWrites,
     orderConfirmationSecret,
+    cloudBffSecret,
+    cloudAuthMaxSkewMs,
+    cloudNonceTtlMs,
     host,
     port,
     dataDir,

@@ -3,7 +3,10 @@ import { loadConfig } from './config.js';
 
 describe('cloud execution configuration', () => {
   it('defaults cloud deployments to preview-only', () => {
-    const config = loadConfig({ GCT_DEPLOYMENT_MODE: 'cloud' });
+    const config = loadConfig({
+      GCT_DEPLOYMENT_MODE: 'cloud',
+      GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
+    });
     expect(config.deploymentMode).toBe('cloud');
     expect(config.executionMode).toBe('preview');
     expect(config.allowLiveWrites).toBe(false);
@@ -30,15 +33,24 @@ describe('cloud execution configuration', () => {
     );
   });
 
+  it('requires a durable BFF identity secret for every cloud deployment', () => {
+    expect(() => loadConfig({ GCT_DEPLOYMENT_MODE: 'cloud' }))
+      .toThrow('cloud deployment requires GCT_BFF_HMAC_SECRET');
+    expect(() => loadConfig({ GCT_DEPLOYMENT_MODE: 'cloud', GCT_BFF_HMAC_SECRET: 'too-short' }))
+      .toThrow('GCT_BFF_HMAC_SECRET must contain at least 32 characters');
+  });
+
   it('requires a durable confirmation secret before cloud live execution', () => {
     expect(() => loadConfig({
       GCT_DEPLOYMENT_MODE: 'cloud',
       GCT_EXECUTION_MODE: 'live',
       GCT_ALLOW_LIVE_WRITES: '1',
+      GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
     })).toThrow('cloud live execution requires GCT_ORDER_CONFIRMATION_SECRET');
     expect(() => loadConfig({
       GCT_DEPLOYMENT_MODE: 'cloud',
       GCT_ORDER_CONFIRMATION_SECRET: 'too-short',
+      GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
     })).toThrow('GCT_ORDER_CONFIRMATION_SECRET must contain at least 32 characters');
   });
 });

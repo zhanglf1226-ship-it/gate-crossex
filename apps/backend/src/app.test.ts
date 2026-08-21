@@ -16,6 +16,7 @@ import { GateApiError, type CrossExOrderRequest, type GateCrossExAccount, type G
 import { openDatabase } from './database.js';
 import { CrossExMarketHub } from './market-hub.js';
 import { TradingSession } from './trading-session.js';
+import { cloudBodyHash, signCloudRequest, type CloudRole } from './cloud-auth.js';
 
 const accountFixture: GateCrossExAccount = {
   available_margin: '1200',
@@ -346,6 +347,7 @@ async function createTestApp(options: { liveTradingEnabled?: boolean; cloudPrevi
       GCT_DEPLOYMENT_MODE: 'cloud',
       GCT_EXECUTION_MODE: 'preview',
       GCT_ALLOW_LIVE_WRITES: '0',
+      GCT_BFF_HMAC_SECRET: 'cloud-bff-secret-with-at-least-32-characters',
     } : {}),
   });
   const database = openDatabase(config.databasePath, config.migrationsDir);
@@ -387,6 +389,20 @@ function catalogSymbol(symbol: string, venue: string): GateCrossExSymbol {
     min_size: '0.001', min_notional: '5', lot_size: '0.001', tick_size: '0.01',
     max_num_orders: '100', max_market_size: '120', max_limit_size: '1000', contract_size: null,
     liquidation_fee: '0.0125', default_leverage: '3', delist_time: '0',
+  };
+}
+
+function cloudHeaders(method: string, url: string, body: unknown, role: CloudRole, nonce: string): Record<string, string> {
+  const identity = {
+    userId: 'test-user', role, timestamp: String(Date.now()), nonce, bodyHash: cloudBodyHash(body),
+  };
+  return {
+    'x-gct-user-id': identity.userId,
+    'x-gct-role': identity.role,
+    'x-gct-request-timestamp': identity.timestamp,
+    'x-gct-nonce': identity.nonce,
+    'x-gct-body-sha256': identity.bodyHash,
+    'x-gct-signature': signCloudRequest('cloud-bff-secret-with-at-least-32-characters', method, url, identity),
   };
 }
 

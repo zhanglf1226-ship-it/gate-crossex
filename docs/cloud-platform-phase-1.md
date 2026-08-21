@@ -70,19 +70,32 @@ The first Phase 2 increment adds a mandatory cloud order confirmation boundary:
 - Cloud live execution additionally requires a durable `GCT_ORDER_CONFIRMATION_SECRET` containing at least 32 characters.
 - Preview mode remains non-executable: confirmation is denied before any exchange write call.
 
+## Phase 2 trusted BFF identity boundary
+
+The second Phase 2 increment requires a signed portal/BFF identity for private cloud routes:
+
+- Cloud startup requires `GCT_BFF_HMAC_SECRET` with at least 32 characters.
+- The BFF signs method, URL, user ID, role, request timestamp, nonce and canonical body hash.
+- Requests outside the clock window, with a modified body, invalid signature or reused nonce are rejected.
+- Roles are `viewer`, `planner`, `approver`, `admin` and `auditor`.
+- Order and target-state previews require planner/admin; confirmation requires approver/admin; trading-mode and credential changes require admin.
+- In cloud mode all `/api/**`, `/secure/**` and `/ws/stream` routes are private by default, except the explicit health, discovery and public-market allowlist.
+- The nonce replay store is process-local in this increment. The Fastify core must remain single-instance until it is replaced by an atomic shared store such as Redis or PostgreSQL.
+
 This increment does **not** make the cloud platform production-ready for live execution. Keep:
 
 ```env
 GCT_DEPLOYMENT_MODE=cloud
 GCT_EXECUTION_MODE=preview
 GCT_ALLOW_LIVE_WRITES=0
+GCT_BFF_HMAC_SECRET=<secret-manager-reference>
 ```
 
 ## Required before live execution
 
-1. Unified user authentication with MFA.
-2. Server-side sessions and CSRF protection.
-3. Roles: viewer, planner, approver, admin, auditor.
+1. Connect the trusted BFF identity to real OIDC authentication with MFA.
+2. Server-side sessions and CSRF protection at the portal/BFF layer.
+3. Persist actor roles and approval policy instead of accepting roles solely from the BFF assertion.
 4. Account ownership and scope on every private API and WebSocket subscription.
 5. Cloud secret manager integration; no public credential-entry page.
 6. Risk policies: order, daily, position, symbol, venue, leverage and drawdown limits.

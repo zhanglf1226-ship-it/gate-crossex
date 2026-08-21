@@ -4,7 +4,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
-import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -69,6 +69,7 @@ import { StrategyEngine, StrategyEngineError } from './strategy-engine.js';
 import { TradingSession } from './trading-session.js';
 import { TradingRuntime, TradingRuntimeError } from './trading-runtime.js';
 import { OrderConfirmationError, OrderConfirmationStore } from './order-confirmation.js';
+import { CloudAuthError, CloudRequestAuthenticator, type CloudPrincipal, type CloudRole } from './cloud-auth.js';
 import { buildTargetStatePreview } from './target-state-preview.js';
 import { CrossExPrivateStream } from './private-stream.js';
 import { LivePortfolioStore, type LivePortfolioSnapshot } from './live-portfolio.js';
@@ -203,6 +204,8 @@ export interface BuildAppOptions {
   logger?: boolean;
   rateLimitMax?: number;
 }
+
+const cloudPrincipals = new WeakMap<object, CloudPrincipal>();
 
 function noControlCharacters(value: string): boolean {
   return [...value].every((character) => {
@@ -455,6 +458,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     database,
     config.orderConfirmationSecret ? Buffer.from(config.orderConfirmationSecret, 'utf8') : undefined,
   );
+  const cloudAuthenticator = config.deploymentMode === 'cloud' && config.cloudBffSecret
+    ? new CloudRequestAuthenticator(config.cloudBffSecret, config.cloudAuthMaxSkewMs, config.cloudNonceTtlMs)
+    : null;
   const privateStream = new CrossExPrivateStream(config.gatePrivateWebSocketUrl, credentialVault);
   const cachedPortfolioAtBoot = readLatestPortfolioSnapshot(database);
   const livePortfolio = new LivePortfolioStore(
@@ -853,6 +859,57 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
   });
 
+  const authenticateCloudRequest = (request: FastifyRequest): CloudPrincipal | null => {
+    if (!cloudAuthenticator) return null;
+    const cached = cloudPrincipals.get(request);
+    if (cached) return cached;
+    const principal = cloudAuthenticator.authenticate({
+      method: request.method,
+      url: request.url,
+      body: request.body,
+      headers: request.headers,
+    });
+    cloudPrincipals.set(request, principal);
+    return principal;
+  };
+  const requireCloudRoles = (allowedRoles: readonly CloudRole[]) => async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const principal = authenticateCloudRequest(request);
+      if (principal) cloudAuthenticator?.authorize(principal, allowedRoles);
+    } catch (error) {
+      if (error instanceof CloudAuthError) return reply.code(error.statusCode).send({ error: error.code });
+      request.log.error({ error }, 'cloud identity verification failed');
+      return reply.code(500).send({ error: 'cloud_identity_verification_failed' });
+    }
+  };
+  const publicCloudPath = (url: string): boolean => {
+    const path = url.split('?', 1)[0] ?? url;
+    return path === '/health'
+      || path === '/api/system/discovery'
+      || path === '/api/markets'
+      || path.startsWith('/api/markets/')
+      || path === '/api/crossex/instruments'
+      || /^\/api\/crossex\/instruments\/[^/]+\/(risk-limits|market-snapshot)$/.test(path);
+  };
+  const defaultCloudRoles = (request: FastifyRequest): readonly CloudRole[] => {
+    const path = request.url.split('?', 1)[0] ?? request.url;
+    if (path.startsWith('/secure/')) return ['admin'];
+    if (request.method === 'GET') return ['viewer', 'planner', 'approver', 'admin', 'auditor'];
+    if (path === '/api/v1/trading/order-previews' || path === '/api/v1/strategies/target-state-previews') {
+      return ['planner', 'admin'];
+    }
+    if (path.includes('/confirm') || path.includes('/transfers') || path.includes('/orders') || path.includes('/strategies')) {
+      return ['approver', 'admin'];
+    }
+    return ['admin'];
+  };
+  app.addHook('preHandler', async (request, reply) => {
+    const path = request.url.split('?', 1)[0] ?? request.url;
+    const protectedPath = path.startsWith('/api/') || path.startsWith('/secure/') || path === '/ws/stream';
+    if (!cloudAuthenticator || !protectedPath || publicCloudPath(request.url)) return;
+    return requireCloudRoles(defaultCloudRoles(request))(request, reply);
+  });
+
   app.get('/health', async (): Promise<HealthResponse> => {
     const databaseStatus = readDatabaseStatus(database);
     return {
@@ -898,13 +955,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     };
   });
 
-  app.get('/api/trading-mode', async () => ({ mode: tradingSession.current }));
+  app.get('/api/trading-mode', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async () => ({ mode: tradingSession.current }));
 
   app.post('/api/trading-mode', {
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
-    preHandler: async (request, reply) => {
+    preHandler: [requireCloudRoles(['admin']), async (request, reply) => {
       if (request.headers['x-gct-trading-intent'] !== 'set-trading-mode') return reply.code(403).send({ error: 'missing_trading_intent' });
-    },
+    }],
   }, async (request, reply) => {
     const parsed = z.object({ mode: z.enum(['readonly', 'live']), acceptDisclaimer: z.boolean().default(false) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_trading_mode' });
@@ -993,20 +1052,25 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.get('/api/markets', async () => marketHub.snapshot());
 
-  app.get('/api/trading/snapshot', async () => tradingRuntime.snapshot());
+  app.get('/api/trading/snapshot', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async () => tradingRuntime.snapshot());
 
   app.post('/api/v1/trading/order-previews', {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-    preHandler: async (request, reply) => {
+    preHandler: [requireCloudRoles(['planner', 'admin']), async (request, reply) => {
       if (request.headers['x-gct-trading-intent'] !== 'preview-order') {
         return reply.code(403).send({ error: 'missing_preview_intent' });
       }
-    },
+    }],
   }, async (request, reply) => {
     try {
       const preview = orderConfirmations.create(request.body);
+      const actor = cloudPrincipals.get(request);
       addAuditEvent(database, 'order_preview_created', {
         previewId: preview.previewId,
+        actorUserId: actor?.userId ?? null,
+        actorRole: actor?.role ?? null,
         requestHash: preview.requestHash,
         symbol: preview.canonicalOrder.symbol,
         side: preview.canonicalOrder.side,
@@ -1027,11 +1091,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.post('/api/v1/strategies/target-state-previews', {
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-    preHandler: async (request, reply) => {
+    preHandler: [requireCloudRoles(['planner', 'admin']), async (request, reply) => {
       if (request.headers['x-gct-trading-intent'] !== 'preview-target-state') {
         return reply.code(403).send({ error: 'missing_preview_intent' });
       }
-    },
+    }],
   }, async (request, reply) => {
     try {
       const preview = buildTargetStatePreview(request.body);
@@ -1107,11 +1171,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.post('/api/v1/trading/order-previews/:previewId/confirm', {
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-    preHandler: async (request, reply) => {
+    preHandler: [requireCloudRoles(['approver', 'admin']), async (request, reply) => {
       if (request.headers['x-gct-trading-intent'] !== 'confirm-order') {
         return reply.code(403).send({ error: 'missing_confirmation_intent' });
       }
-    },
+    }],
   }, async (request, reply) => {
     if (config.executionMode !== 'live' || !config.allowLiveWrites) {
       addAuditEvent(database, 'live_execution_denied', { action: 'confirm_order', reason: 'preview_only_mode' });
@@ -1124,8 +1188,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
     try {
       const order = await orderConfirmations.confirm(params.data.previewId, idempotencyKey, tradingRuntime);
+      const actor = cloudPrincipals.get(request);
       addAuditEvent(database, 'order_preview_confirmed', {
         previewId: params.data.previewId,
+        actorUserId: actor?.userId ?? null,
+        actorRole: actor?.role ?? null,
         executionOrderId: order.id,
         clientOrderId: order.clientOrderId,
       });
