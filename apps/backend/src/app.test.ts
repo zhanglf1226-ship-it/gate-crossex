@@ -337,11 +337,16 @@ interface TestContext {
 
 const resources: TestContext[] = [];
 
-async function createTestApp(options: { liveTradingEnabled?: boolean; marketHub?: CrossExMarketHub; startMarketStream?: boolean; directory?: string } = {}): Promise<TestContext> {
+async function createTestApp(options: { liveTradingEnabled?: boolean; cloudPreview?: boolean; marketHub?: CrossExMarketHub; startMarketStream?: boolean; directory?: string } = {}): Promise<TestContext> {
   const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'gate-crossex-app-'));
   const config = loadConfig({
     GCT_DATA_DIR: directory,
     GCT_MIGRATIONS_DIR: resolve(process.cwd(), '../../migrations'),
+    ...(options.cloudPreview ? {
+      GCT_DEPLOYMENT_MODE: 'cloud',
+      GCT_EXECUTION_MODE: 'preview',
+      GCT_ALLOW_LIVE_WRITES: '0',
+    } : {}),
   });
   const database = openDatabase(config.databasePath, config.migrationsDir);
   const vault = new MemoryCredentialVault();
@@ -527,6 +532,56 @@ describe('local backend', () => {
     expect(gateway.cancelledOrders).toEqual(['live-1']);
     const afterLock = await app.inject({ method: 'GET', url: '/api/trading/snapshot', headers: host });
     expect(afterLock.json().orders).toEqual([expect.objectContaining({ remoteOrderId: 'live-1', state: 'CANCELLED' })]);
+  });
+
+  it('keeps cloud preview mode non-executable while allowing order and target-state previews', async () => {
+    const { app, gateway } = await createTestApp({ cloudPreview: true });
+    const host = { host: '127.0.0.1:17840' };
+
+    const deniedLive = await app.inject({
+      method: 'POST',
+      url: '/api/trading-mode',
+      headers: { ...host, 'x-gct-trading-intent': 'set-trading-mode' },
+      payload: { mode: 'live', acceptDisclaimer: true },
+    });
+    expect(deniedLive.statusCode).toBe(403);
+    expect(deniedLive.json()).toEqual({ error: 'live_execution_disabled' });
+
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/v1/trading/order-previews',
+      headers: { ...host, 'x-gct-trading-intent': 'preview-order' },
+      payload: {
+        symbol: 'BINANCE_FUTURE_BTC_USDT', side: 'BUY', type: 'LIMIT',
+        timeInForce: 'GTC', quantity: '0.01', price: '64000', reduceOnly: false,
+      },
+    });
+    expect(preview.statusCode).toBe(201);
+    expect(preview.json()).toMatchObject({ executionAllowed: false, mode: 'preview_only' });
+
+    const targetPreview = await app.inject({
+      method: 'POST',
+      url: '/api/v1/strategies/target-state-previews',
+      headers: { ...host, 'x-gct-trading-intent': 'preview-target-state' },
+      payload: {
+        meta: { contract: 'gate-crossex-target-state', contract_version: 1, strategy_tag: 'mainline' },
+        positions: [{
+          symbol: 'BTCUSDT', target_side: 'BUY', target_quote_qty: 100,
+          route: { mode: 'AUTO', allowed_exchanges: ['GATE', 'BINANCE'] },
+        }],
+      },
+    });
+    expect(targetPreview.statusCode).toBe(201);
+    expect(targetPreview.json()).toMatchObject({ executionAllowed: false, contractVersion: 1 });
+
+    const deniedOrder = await app.inject({
+      method: 'POST', url: '/api/trading/orders',
+      headers: { ...host, 'x-gct-trading-intent': 'place-order' },
+      payload: { symbol: 'BINANCE_FUTURE_BTC_USDT', side: 'BUY', type: 'MARKET', timeInForce: 'IOC', quantity: '0.01', reduceOnly: false },
+    });
+    expect(deniedOrder.statusCode).toBe(403);
+    expect(deniedOrder.json()).toEqual({ error: 'live_execution_disabled' });
+    expect(gateway.createdOrders).toEqual([]);
   });
 
   it('records every trading-mode change in the audit log', async () => {

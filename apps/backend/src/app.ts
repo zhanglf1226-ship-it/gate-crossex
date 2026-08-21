@@ -68,6 +68,8 @@ import { CrossExMarketHub, CANDLE_INTERVALS, type MarketDefinition, type MarketH
 import { StrategyEngine, StrategyEngineError } from './strategy-engine.js';
 import { TradingSession } from './trading-session.js';
 import { TradingRuntime, TradingRuntimeError } from './trading-runtime.js';
+import { buildOrderPreview } from './order-preview.js';
+import { buildTargetStatePreview } from './target-state-preview.js';
 import { CrossExPrivateStream } from './private-stream.js';
 import { LivePortfolioStore, type LivePortfolioSnapshot } from './live-portfolio.js';
 import { readDatabaseStatus } from './database.js';
@@ -902,6 +904,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }, async (request, reply) => {
     const parsed = z.object({ mode: z.enum(['readonly', 'live']), acceptDisclaimer: z.boolean().default(false) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_trading_mode' });
+    if (parsed.data.mode === 'live' && (config.executionMode !== 'live' || !config.allowLiveWrites)) {
+      addAuditEvent(database, 'live_execution_denied', { reason: 'preview_only_mode' });
+      return reply.code(403).send({ error: 'live_execution_disabled' });
+    }
     // Leaving the boot-time 'unset' state in any direction, or arming live trading from any
     // state, requires a fresh human acknowledgement of the risk disclaimer. The one transition
     // that must never be gated is live → readonly: locking is the safety action.
@@ -985,6 +991,65 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.get('/api/trading/snapshot', async () => tradingRuntime.snapshot());
 
+  app.post('/api/v1/trading/order-previews', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    preHandler: async (request, reply) => {
+      if (request.headers['x-gct-trading-intent'] !== 'preview-order') {
+        return reply.code(403).send({ error: 'missing_preview_intent' });
+      }
+    },
+  }, async (request, reply) => {
+    try {
+      const preview = buildOrderPreview(request.body);
+      addAuditEvent(database, 'order_preview_created', {
+        previewId: preview.previewId,
+        requestHash: preview.requestHash,
+        symbol: preview.canonicalOrder.symbol,
+        side: preview.canonicalOrder.side,
+        executionAllowed: false,
+      });
+      return reply.code(201).send(preview);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.code(400).send({
+          error: 'invalid_order_preview',
+          issues: error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+        });
+      }
+      request.log.error({ error }, 'order preview failed');
+      return reply.code(500).send({ error: 'order_preview_failed' });
+    }
+  });
+
+  app.post('/api/v1/strategies/target-state-previews', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    preHandler: async (request, reply) => {
+      if (request.headers['x-gct-trading-intent'] !== 'preview-target-state') {
+        return reply.code(403).send({ error: 'missing_preview_intent' });
+      }
+    },
+  }, async (request, reply) => {
+    try {
+      const preview = buildTargetStatePreview(request.body);
+      addAuditEvent(database, 'target_state_preview_created', {
+        previewId: preview.previewId,
+        requestHash: preview.requestHash,
+        targetCount: preview.targets.length,
+        executionAllowed: false,
+      });
+      return reply.code(201).send(preview);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.code(400).send({
+          error: 'invalid_target_state',
+          issues: error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+        });
+      }
+      request.log.error({ error }, 'target-state preview failed');
+      return reply.code(500).send({ error: 'target_state_preview_failed' });
+    }
+  });
+
   app.get('/api/trading/leverage/:symbol', {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
     preHandler: async (request, reply) => {
@@ -1012,6 +1077,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       if (request.headers['x-gct-trading-intent'] !== 'set-leverage') return reply.code(403).send({ error: 'missing_trading_intent' });
     },
   }, async (request, reply) => {
+    if (config.executionMode !== 'live' || !config.allowLiveWrites) {
+      addAuditEvent(database, 'live_execution_denied', { action: 'set_leverage', reason: 'preview_only_mode' });
+      return reply.code(403).send({ error: 'live_execution_disabled' });
+    }
     const params = z.object({ symbol: z.string().regex(/^(GATE|BINANCE|OKX|BYBIT|KRAKEN|HYPERLIQUID|DERIBIT)_FUTURE_[A-Z0-9]+_(USDT|USDC|USD)$/) }).safeParse(request.params);
     const body = z.object({ leverage: z.string().regex(/^(?:[1-9]\d*)(?:\.\d+)?$/).refine((value) => Number(value) <= 200) }).safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'invalid_leverage' });
@@ -1038,6 +1107,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       if (request.headers['x-gct-trading-intent'] !== 'place-order') return reply.code(403).send({ error: 'missing_trading_intent' });
     },
   }, async (request, reply) => {
+    if (config.executionMode !== 'live' || !config.allowLiveWrites) {
+      addAuditEvent(database, 'live_execution_denied', { action: 'create_order', reason: 'preview_only_mode' });
+      return reply.code(403).send({ error: 'live_execution_disabled' });
+    }
     try {
       return await tradingRuntime.createOrder(request.body);
     } catch (error) {
@@ -1055,6 +1128,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       if (request.headers['x-gct-trading-intent'] !== 'cancel-order') return reply.code(403).send({ error: 'missing_trading_intent' });
     },
   }, async (request, reply) => {
+    if (config.executionMode !== 'live' || !config.allowLiveWrites) {
+      addAuditEvent(database, 'live_execution_denied', { action: 'cancel_order', reason: 'preview_only_mode' });
+      return reply.code(403).send({ error: 'live_execution_disabled' });
+    }
     const parsed = z.object({ id: z.string().uuid() }).safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_order_id' });
     try { return await tradingRuntime.cancelOrder(parsed.data.id); }
@@ -1073,6 +1150,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       if (request.headers['x-gct-trading-intent'] !== 'start-strategy') return reply.code(403).send({ error: 'missing_trading_intent' });
     },
   }, async (request, reply) => {
+    if (config.executionMode !== 'live' || !config.allowLiveWrites) {
+      addAuditEvent(database, 'live_execution_denied', { action: 'start_strategy', reason: 'preview_only_mode' });
+      return reply.code(403).send({ error: 'live_execution_disabled' });
+    }
     try {
       // Strategy submission is an execution boundary: load exchange constraints here even when a
       // direct API client has not visited the instrument pages first.
@@ -1719,6 +1800,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       }
     },
   }, async (request, reply) => {
+    if (config.executionMode !== 'live' || !config.allowLiveWrites) {
+      addAuditEvent(database, 'live_execution_denied', { action: 'transfer_funds', reason: 'preview_only_mode' });
+      return reply.code(403).send({ error: 'live_execution_disabled' });
+    }
     const parsed = CrossExTransferRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_transfer' });
     if (!tradingSession.liveTradingEnabled) return reply.code(403).send({ error: 'live_trading_locked' });

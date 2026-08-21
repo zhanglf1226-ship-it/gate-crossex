@@ -13,7 +13,7 @@ const decimalText = z.string().regex(/^\d+(?:\.\d+)?$/).refine((value) => new De
 const signedDecimalText = z.string().regex(/^-?\d+(?:\.\d+)?$/);
 const venue = z.enum(['GATE', 'BINANCE', 'OKX', 'BYBIT', 'KRAKEN', 'HYPERLIQUID', 'DERIBIT']);
 
-const CreateOrderInputSchema = z.object({
+export const CreateOrderInputSchema = z.object({
   symbol: z.string().regex(/^(GATE|BINANCE|OKX|BYBIT|KRAKEN|HYPERLIQUID|DERIBIT)_FUTURE_[A-Z0-9]+_(USDT|USDC|USD)$/),
   side: z.enum(['BUY', 'SELL']),
   type: z.enum(['LIMIT', 'MARKET']),

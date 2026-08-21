@@ -4,6 +4,9 @@ import { dirname, join, resolve } from 'node:path';
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 export interface BackendConfig {
+  deploymentMode: 'local' | 'cloud';
+  executionMode: 'preview' | 'live';
+  allowLiveWrites: boolean;
   host: string;
   port: number;
   dataDir: string;
@@ -19,6 +22,14 @@ export interface BackendConfig {
   gatePrivateWebSocketUrl: string;
 }
 
+function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined || value.trim() === '') return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  throw new Error(`invalid boolean value: ${value}`);
+}
+
 function parsePort(value: string, name: string): number {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
@@ -28,6 +39,17 @@ function parsePort(value: string, name: string): number {
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): BackendConfig {
+  const deploymentMode = environment.GCT_DEPLOYMENT_MODE === 'cloud' ? 'cloud' : 'local';
+  const defaultExecutionMode = deploymentMode === 'cloud' ? 'preview' : 'live';
+  const executionMode = environment.GCT_EXECUTION_MODE === 'preview'
+    ? 'preview'
+    : environment.GCT_EXECUTION_MODE === 'live'
+      ? 'live'
+      : defaultExecutionMode;
+  const allowLiveWrites = parseBoolean(environment.GCT_ALLOW_LIVE_WRITES, deploymentMode === 'local');
+  if (deploymentMode === 'cloud' && executionMode === 'live' && !allowLiveWrites) {
+    throw new Error('cloud live execution requires GCT_ALLOW_LIVE_WRITES=1');
+  }
   const host = environment.GCT_HOST ?? '127.0.0.1';
   const port = parsePort(environment.PORT ?? environment.GCT_PORT ?? '17840', 'GCT_PORT');
   const frontendPort = parsePort(environment.GCT_FRONTEND_PORT ?? '5173', 'GCT_FRONTEND_PORT');
@@ -46,6 +68,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
     `http://[::1]:${loopbackPort}`,
   ]);
   return {
+    deploymentMode,
+    executionMode,
+    allowLiveWrites,
     host,
     port,
     dataDir,
