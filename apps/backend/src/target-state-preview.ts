@@ -4,7 +4,11 @@ import { z } from 'zod';
 const ContractName = 'gate-crossex-target-state';
 const VenueSchema = z.enum(['GATE', 'BINANCE', 'OKX', 'BYBIT', 'KRAKEN', 'HYPERLIQUID', 'DERIBIT']);
 const DecimalSchema = z.union([z.number().finite().nonnegative(), z.string().regex(/^\d+(?:\.\d+)?$/)]);
-const RawSymbolSchema = z.string().trim().toUpperCase().regex(/^[A-Z0-9]{2,30}$/);
+const RawSymbolSchema = z.string().trim().toUpperCase().refine((value) =>
+  /^[A-Z0-9]{2,30}$/.test(value)
+  || /^(GATE|BINANCE|OKX|BYBIT|KRAKEN|HYPERLIQUID|DERIBIT)_FUTURE_[A-Z0-9]+_(USDT|USDC|USD)$/.test(value),
+  'unsupported target-state symbol format',
+);
 
 const RouteSchema = z.object({
   mode: z.enum(['AUTO', 'FIXED']).default('AUTO'),

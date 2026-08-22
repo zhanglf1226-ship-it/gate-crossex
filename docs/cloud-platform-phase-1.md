@@ -107,6 +107,20 @@ GCT_CLOUD_ACCOUNT_ID=<single-account-id>
 GCT_CLOUD_BOOTSTRAP_ADMIN=<one-time-bootstrap-user>
 ```
 
+## TARGET shadow planning
+
+The first TARGET takeover increment persists deterministic, non-executable shadow plans:
+
+- validates `gate-crossex-target-state/v1` and rejects expired or duplicate normalized symbols;
+- fingerprints the TARGET request and current position snapshot;
+- compiles flatten, reduce and open actions with explicit phases;
+- clips actions using the configured maximum order notional;
+- binds plans to the single configured cloud account and authenticated creator;
+- idempotently reuses the same plan for the same TARGET and position fingerprint;
+- never creates `execution_orders`, calls a trading gateway or exposes a confirm/execute route.
+
+The compiler intentionally selects only a deterministic preferred/first route candidate. Fresh venue depth, slippage scoring, exchange precision and minimum-order quantization remain required before any executable TARGET plan.
+
 ## Required before live execution
 
 1. Connect the trusted BFF identity to real OIDC authentication with MFA.

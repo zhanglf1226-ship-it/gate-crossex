@@ -71,6 +71,7 @@ import { CloudAuthError, CloudRequestAuthenticator, type CloudPrincipal, type Cl
 import { AccountOwnershipError, AccountOwnershipStore } from './account-ownership.js';
 import { ExecutionRiskError, ExecutionRiskGuard, ExecutionRiskPolicySchema } from './execution-risk.js';
 import { buildTargetStatePreview } from './target-state-preview.js';
+import { TargetShadowPlanError, TargetShadowPlanStore } from './target-shadow-plan.js';
 import { CrossExPrivateStream } from './private-stream.js';
 import { LivePortfolioStore, type LivePortfolioSnapshot } from './live-portfolio.js';
 import { readDatabaseStatus } from './database.js';
@@ -455,6 +456,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const tradingSession = options.tradingSession ?? new TradingSession();
   const accountOwnership = new AccountOwnershipStore(database);
   const executionRisk = new ExecutionRiskGuard(database);
+  const targetShadowPlans = new TargetShadowPlanStore(database, config.cloudDefaultAccountId ?? '__cloud_account_unconfigured__');
   const tradingRuntime = new TradingRuntime(database, tradingSession, credentialVault, crossExGateway, {
     beforeCreateOrder: config.deploymentMode === 'cloud'
       ? (order, identity, metadata) => {
@@ -923,7 +925,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     const path = request.url.split('?', 1)[0] ?? request.url;
     if (path.startsWith('/secure/')) return ['admin'];
     if (request.method === 'GET') return ['viewer', 'planner', 'approver', 'admin', 'auditor'];
-    if (path === '/api/v1/trading/order-previews' || path === '/api/v1/strategies/target-state-previews') {
+    if (path === '/api/v1/trading/order-previews' || path === '/api/v1/strategies/target-state-previews'
+      || path === '/api/v1/strategies/target-shadow-plans') {
       return ['planner', 'admin'];
     }
     if (path.includes('/confirm') || path.includes('/transfers') || path.includes('/orders') || path.includes('/strategies')) {
@@ -1176,6 +1179,52 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       request.log.error({ error }, 'target-state preview failed');
       return reply.code(500).send({ error: 'target_state_preview_failed' });
     }
+  });
+
+  app.post('/api/v1/strategies/target-shadow-plans', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    preHandler: [requireCloudRoles(['planner', 'admin']), async (request, reply) => {
+      if (request.headers['x-gct-trading-intent'] !== 'shadow-target-state') {
+        return reply.code(403).send({ error: 'missing_shadow_intent' });
+      }
+    }],
+  }, async (request, reply) => {
+    try {
+      const actor = cloudPrincipals.get(request);
+      if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+      const result = targetShadowPlans.create(request.body, actor.accountId, actor.userId);
+      const plan = result.plan;
+      addAuditEvent(database, result.reused ? 'target_shadow_plan_reused' : 'target_shadow_plan_created', {
+        planId: plan.planId, accountId: actor.accountId, actorUserId: actor.userId,
+        requestHash: plan.requestHash, positionFingerprint: plan.positionFingerprint,
+        planFingerprint: plan.planFingerprint, actionCount: plan.actions.length, executionAllowed: false,
+      });
+      return reply.code(result.reused ? 200 : 201).send({ ...plan, reused: result.reused });
+    } catch (error) {
+      if (error instanceof z.ZodError) return reply.code(400).send({ error: 'invalid_target_state', issues: error.issues });
+      if (error instanceof TargetShadowPlanError) return reply.code(409).send({ error: error.code });
+      request.log.error({ error }, 'target shadow plan failed');
+      return reply.code(500).send({ error: 'target_shadow_plan_failed' });
+    }
+  });
+
+  app.get('/api/v1/strategies/target-shadow-plans', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async (request, reply) => {
+    const actor = cloudPrincipals.get(request);
+    if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+    return { plans: targetShadowPlans.list(actor.accountId) };
+  });
+
+  app.get('/api/v1/strategies/target-shadow-plans/:planId', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async (request, reply) => {
+    const actor = cloudPrincipals.get(request);
+    if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+    const parsed = z.object({ planId: z.string().uuid() }).safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_shadow_plan_id' });
+    const plan = targetShadowPlans.get(parsed.data.planId, actor.accountId);
+    return plan ?? reply.code(404).send({ error: 'target_shadow_plan_not_found' });
   });
 
   app.get('/api/trading/leverage/:symbol', {

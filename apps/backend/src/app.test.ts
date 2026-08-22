@@ -444,7 +444,7 @@ describe('local backend', () => {
       authenticatedTradingEnabled: false,
       tradingMode: 'unset',
       mode: 'live',
-      database: { migrationCount: 20, currentMigration: '0020_execution_risk_guard.sql' },
+      database: { migrationCount: 21, currentMigration: '0021_target_shadow_plans.sql' },
       security: {
         credentialStorage: 'memory_test_only',
         credentialEntryPath: '/secure/credentials',
@@ -615,6 +615,29 @@ describe('local backend', () => {
       error: 'order_preview_required',
       previewEndpoint: '/api/v1/trading/order-previews',
     });
+    expect(gateway.createdOrders).toEqual([]);
+  });
+
+  it('persists signed cloud TARGET shadow plans without creating execution orders', async () => {
+    const { app, database, gateway } = await createTestApp({ cloudPreview: true });
+    const url = '/api/v1/strategies/target-shadow-plans';
+    const body = {
+      meta: { contract: 'gate-crossex-target-state', contract_version: 1, strategy_tag: 'mainline' },
+      positions: [{ symbol: 'BTCUSDT', target_side: 'BUY', target_quote_qty: 100,
+        route: { mode: 'AUTO', allowed_exchanges: ['GATE', 'BINANCE'], prefer_exchange: 'GATE' } }],
+    };
+    const created = await app.inject({ method: 'POST', url,
+      headers: { host: '127.0.0.1:17840', ...cloudHeaders('POST', url, body, 'planner', 'shadow-create-0001'),
+        'x-gct-trading-intent': 'shadow-target-state' }, payload: body });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ executionAllowed: false, accountId: 'gate-default', creatorUserId: 'test-user',
+      actions: [{ kind: 'OPEN', venue: 'GATE', quoteQuantity: '100' }] });
+    const listHeaders = { host: '127.0.0.1:17840', ...cloudHeaders('GET', url, undefined, 'viewer', 'shadow-list-0001') };
+    const listed = await app.inject({ method: 'GET', url, headers: listHeaders });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().plans).toHaveLength(1);
+    expect(database.prepare('SELECT COUNT(*) AS count FROM target_shadow_plans').get()).toEqual({ count: 1 });
+    expect(database.prepare('SELECT COUNT(*) AS count FROM execution_orders').get()).toEqual({ count: 0 });
     expect(gateway.createdOrders).toEqual([]);
   });
 
