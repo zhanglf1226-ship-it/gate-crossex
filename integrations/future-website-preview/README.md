@@ -42,6 +42,18 @@ sudo ./integrations/future-website-preview/scripts/rollback.sh \
   /opt/future/env-backup/website-platform-overlay-<timestamp>
 ```
 
+## HTTPS Nginx overlay
+
+The `nginx/` directory contains versioned rate-limit zones and path-scoped locations for an existing HTTPS virtual host. The locations:
+
+- redirect HTTP `/platform-preview` and `/api/platform-preview/` to HTTPS;
+- proxy only those prefixes to the Flask website on loopback port 8506;
+- apply login/API/page rate limits and a 16KB request-body limit;
+- add `Secure`, `HttpOnly`, and `SameSite=Lax` to Preview-path session cookies;
+- add clickjacking, MIME-sniffing, and referrer protections.
+
+Use `scripts/install_nginx_overlay.py` against a backed-up candidate server block, run `nginx -t`, and reload only after validation. Do not enable Flask's global `SESSION_COOKIE_SECURE` while the same Flask session cookie is still used by HTTP/IP Live Dashboard users; the Nginx overlay scopes `Secure` to the HTTPS Preview paths.
+
 ## Current production note
 
 The first deployment was introduced inline in the existing website before this overlay was extracted. Do not register the Blueprint on top of those inline routes. Migrate by restoring the pre-BFF `app.py` backup or removing the inline `/platform-preview` helper/routes, then deploy this overlay.
