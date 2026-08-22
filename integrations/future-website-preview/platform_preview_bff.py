@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import time
+from datetime import timedelta
 from typing import Any
 
 import requests as http_requests
@@ -23,6 +24,17 @@ _LOGIN_MAX_FAILURES = 5
 _LOGIN_BLOCK_SECONDS = 15 * 60
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_BLOCKED_UNTIL: dict[str, float] = {}
+
+
+@preview_blueprint.record_once
+def _configure_host(state) -> None:
+    state.app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=str(os.environ.get("SESSION_COOKIE_SECURE", "0")).lower()
+        in {"1", "true", "yes", "on"},
+        PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
+    )
 
 
 def _config() -> dict[str, Any]:
