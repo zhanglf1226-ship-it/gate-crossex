@@ -14,7 +14,7 @@ function symbolIdentity(symbol:string):{raw:string;venue:string|null}{const matc
 interface Position { positionId:string; symbol:string; venue:string; side:'BUY'|'SELL'; notional:string; markPrice:string; updatedAt:string }
 type UnclippedAction = Omit<ShadowAction,'clipIndex'|'clipCount'>;
 export interface ShadowAction { kind:'FLATTEN'|'REDUCE'|'OPEN'; symbol:string; venue:string; side:'BUY'|'SELL'; quoteQuantity:string; reduceOnly:boolean; reason:string; phase:1|2; dependsOnPhase:1|null; clipIndex:number; clipCount:number }
-export interface TargetShadowPlan { planId:string; createdAt:string; accountId:string; creatorUserId:string; compilerVersion:string; requestHash:string; positionFingerprint:string; planFingerprint:string; executionAllowed:false; actions:ShadowAction[]; targets:ReturnType<typeof buildTargetStatePreview>['targets'] }
+export interface TargetShadowPlan { planId:string; createdAt:string; accountId:string; creatorUserId:string; compilerVersion:string; requestHash:string; sourceStateFingerprint:string; positionFingerprint:string; planFingerprint:string; executionAllowed:false; actions:ShadowAction[]; targets:ReturnType<typeof buildTargetStatePreview>['targets'] }
 
 function clipActions(database:Database.Database, actions:UnclippedAction[]):ShadowAction[] {
   const row=database.prepare('SELECT max_order_notional FROM execution_risk_guard WHERE id=1').get() as {max_order_notional:string};
@@ -52,8 +52,10 @@ export function compileTargetShadowPlan(database:Database.Database, raw:unknown,
     ? {...action,phase:1 as const,dependsOnPhase:null}
     : action);
   const actions=clipActions(database,phasedActions);
-  const positionFingerprint=hash(current); const planCore={compilerVersion:CompilerVersion,requestHash:preview.requestHash,positionFingerprint,actions,targets:preview.targets};
-  return {planId:randomUUID(),createdAt:now.toISOString(),accountId,creatorUserId,compilerVersion:CompilerVersion,requestHash:preview.requestHash,positionFingerprint,planFingerprint:hash(planCore),executionAllowed:false,actions,targets:preview.targets};
+  const sourceStateFingerprint=typeof state.meta.state_fingerprint==='string'&&/^sha256:[a-f0-9]{64}$/.test(state.meta.state_fingerprint)
+    ? state.meta.state_fingerprint : '';
+  const positionFingerprint=hash(current); const planCore={compilerVersion:CompilerVersion,requestHash:preview.requestHash,sourceStateFingerprint,positionFingerprint,actions,targets:preview.targets};
+  return {planId:randomUUID(),createdAt:now.toISOString(),accountId,creatorUserId,compilerVersion:CompilerVersion,requestHash:preview.requestHash,sourceStateFingerprint,positionFingerprint,planFingerprint:hash(planCore),executionAllowed:false,actions,targets:preview.targets};
 }
 export class TargetShadowPlanError extends Error {
   constructor(readonly code:string){ super(code); this.name='TargetShadowPlanError'; }

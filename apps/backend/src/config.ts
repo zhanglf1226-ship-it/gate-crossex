@@ -13,6 +13,7 @@ export interface BackendConfig {
   cloudNonceTtlMs: number;
   cloudDefaultAccountId: string | null;
   cloudBootstrapAdminUserId: string | null;
+  bridgeAuditDir: string | null;
   host: string;
   port: number;
   dataDir: string;
@@ -121,6 +122,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
     cloudNonceTtlMs,
     cloudDefaultAccountId,
     cloudBootstrapAdminUserId,
+    bridgeAuditDir: environment.GCT_BRIDGE_AUDIT_DIR?.trim() ? resolve(environment.GCT_BRIDGE_AUDIT_DIR) : null,
     host,
     port,
     dataDir,

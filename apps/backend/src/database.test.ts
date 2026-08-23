@@ -30,8 +30,8 @@ describe('database migrations', () => {
 
     expect(readDatabaseStatus(first)).toEqual({
       state: 'ok',
-      migrationCount: 21,
-      currentMigration: '0021_target_shadow_plans.sql',
+      migrationCount: 22,
+      currentMigration: '0022_target_shadow_comparisons.sql',
     });
     const orderColumns = first.prepare('PRAGMA table_info(execution_orders)').all() as Array<{ name: string }>;
     expect(orderColumns.map((column) => column.name)).toContain('failure_reason');
@@ -44,7 +44,7 @@ describe('database migrations', () => {
     first.close();
 
     const reopened = openDatabase(location.path, migrationsDir);
-    expect(readDatabaseStatus(reopened).migrationCount).toBe(21);
+    expect(readDatabaseStatus(reopened).migrationCount).toBe(22);
     reopened.close();
   });
 
@@ -89,7 +89,7 @@ describe('database migrations', () => {
     const database = openDatabase(location.path, resolve(process.cwd(), '../../migrations'));
     const columns = database.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain('correlation_id');
-    expect(readDatabaseStatus(database).currentMigration).toBe('0021_target_shadow_plans.sql');
+    expect(readDatabaseStatus(database).currentMigration).toBe('0022_target_shadow_comparisons.sql');
     database.close();
   });
 

@@ -444,7 +444,7 @@ describe('local backend', () => {
       authenticatedTradingEnabled: false,
       tradingMode: 'unset',
       mode: 'live',
-      database: { migrationCount: 21, currentMigration: '0021_target_shadow_plans.sql' },
+      database: { migrationCount: 22, currentMigration: '0022_target_shadow_comparisons.sql' },
       security: {
         credentialStorage: 'memory_test_only',
         credentialEntryPath: '/secure/credentials',

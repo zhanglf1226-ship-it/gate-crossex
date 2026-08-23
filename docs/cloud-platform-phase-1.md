@@ -121,6 +121,14 @@ The first TARGET takeover increment persists deterministic, non-executable shado
 
 The compiler intentionally selects only a deterministic preferred/first route candidate. Fresh venue depth, slippage scoring, exchange precision and minimum-order quantization remain required before any executable TARGET plan.
 
+### Trusted legacy-plan comparison
+
+Set `GCT_BRIDGE_AUDIT_DIR` to the read-only Bridge audit directory. The backend reads only the latest `bridge_run_<n>_<timestamp>.json` from this fixed directory; callers cannot supply a file path, mtime or audit body.
+
+A comparison is allowed only when the strategy emitter's `state_fingerprint` was preserved through the signal emitter and Bridge audit, and equals the Shadow plan's `sourceStateFingerprint`. Bridge actions must be explicit router annotations; the comparator never guesses side or flatten/reduce semantics from an order response. Repeated clips are aggregated with decimal arithmetic. Missing/stale/untrusted evidence returns `UNCOMPARABLE`.
+
+Comparison remains shadow-only: no Gateway call, order row, confirmation route or execution route exists.
+
 ## Required before live execution
 
 1. Connect the trusted BFF identity to real OIDC authentication with MFA.

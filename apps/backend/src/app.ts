@@ -72,6 +72,7 @@ import { AccountOwnershipError, AccountOwnershipStore } from './account-ownershi
 import { ExecutionRiskError, ExecutionRiskGuard, ExecutionRiskPolicySchema } from './execution-risk.js';
 import { buildTargetStatePreview } from './target-state-preview.js';
 import { TargetShadowPlanError, TargetShadowPlanStore } from './target-shadow-plan.js';
+import { readLatestBridgeAudit, TargetShadowComparisonStore } from './target-shadow-comparison.js';
 import { CrossExPrivateStream } from './private-stream.js';
 import { LivePortfolioStore, type LivePortfolioSnapshot } from './live-portfolio.js';
 import { readDatabaseStatus } from './database.js';
@@ -456,7 +457,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const tradingSession = options.tradingSession ?? new TradingSession();
   const accountOwnership = new AccountOwnershipStore(database);
   const executionRisk = new ExecutionRiskGuard(database);
-  const targetShadowPlans = new TargetShadowPlanStore(database, config.cloudDefaultAccountId ?? '__cloud_account_unconfigured__');
+  const shadowAccountId = config.cloudDefaultAccountId ?? '__cloud_account_unconfigured__';
+  const targetShadowPlans = new TargetShadowPlanStore(database, shadowAccountId);
+  const targetShadowComparisons = new TargetShadowComparisonStore(database, shadowAccountId);
   const tradingRuntime = new TradingRuntime(database, tradingSession, credentialVault, crossExGateway, {
     beforeCreateOrder: config.deploymentMode === 'cloud'
       ? (order, identity, metadata) => {
@@ -926,7 +929,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (path.startsWith('/secure/')) return ['admin'];
     if (request.method === 'GET') return ['viewer', 'planner', 'approver', 'admin', 'auditor'];
     if (path === '/api/v1/trading/order-previews' || path === '/api/v1/strategies/target-state-previews'
-      || path === '/api/v1/strategies/target-shadow-plans') {
+      || path === '/api/v1/strategies/target-shadow-plans'
+      || (path.startsWith('/api/v1/strategies/target-shadow-plans/') && path.endsWith('/comparisons'))) {
       return ['planner', 'admin'];
     }
     if (path.includes('/confirm') || path.includes('/transfers') || path.includes('/orders') || path.includes('/strategies')) {
@@ -1225,6 +1229,48 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_shadow_plan_id' });
     const plan = targetShadowPlans.get(parsed.data.planId, actor.accountId);
     return plan ?? reply.code(404).send({ error: 'target_shadow_plan_not_found' });
+  });
+
+  app.post('/api/v1/strategies/target-shadow-plans/:planId/comparisons', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    preHandler: [requireCloudRoles(['planner', 'admin']), async (request, reply) => {
+      if (request.headers['x-gct-trading-intent'] !== 'compare-shadow-plan') {
+        return reply.code(403).send({ error: 'missing_comparison_intent' });
+      }
+    }],
+  }, async (request, reply) => {
+    const actor = cloudPrincipals.get(request);
+    if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+    const params = z.object({ planId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_shadow_comparison' });
+    const plan = targetShadowPlans.get(params.data.planId, actor.accountId);
+    if (!plan) return reply.code(404).send({ error: 'target_shadow_plan_not_found' });
+    try {
+      if (!config.bridgeAuditDir) return reply.code(503).send({ error: 'bridge_audit_directory_unconfigured' });
+      const latestAudit = readLatestBridgeAudit(config.bridgeAuditDir);
+      const result = targetShadowComparisons.create(plan, latestAudit.audit, latestAudit.path, latestAudit.mtimeMs);
+      addAuditEvent(database, result.reused ? 'target_shadow_comparison_reused' : 'target_shadow_comparison_created', {
+        comparisonId: result.comparison.comparisonId, shadowPlanId: plan.planId, accountId: actor.accountId,
+        actorUserId: actor.userId, status: result.comparison.status, confidence: result.comparison.confidence,
+        bridgeAuditFingerprint: result.comparison.bridgeAuditFingerprint,
+      });
+      return reply.code(result.reused ? 200 : 201).send({ ...result.comparison, reused: result.reused });
+    } catch (error) {
+      if (error instanceof z.ZodError) return reply.code(400).send({ error: 'invalid_bridge_audit', issues: error.issues });
+      if (error instanceof Error && ['bridge_audit_unavailable', 'ENOENT'].some(code => error.message.includes(code))) {
+        return reply.code(503).send({ error: 'bridge_audit_unavailable' });
+      }
+      request.log.error({ error }, 'target shadow comparison failed');
+      return reply.code(500).send({ error: 'target_shadow_comparison_failed' });
+    }
+  });
+
+  app.get('/api/v1/strategies/target-shadow-comparisons', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async (request, reply) => {
+    const actor = cloudPrincipals.get(request);
+    if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+    return { comparisons: targetShadowComparisons.list() };
   });
 
   app.get('/api/trading/leverage/:symbol', {
