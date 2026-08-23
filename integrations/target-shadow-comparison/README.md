@@ -18,3 +18,9 @@ Missing fingerprints, stale audits, wrong sources or missing explicit actions ar
 Run `install_legacy_overlay.py` first against a copied tree using `TARGET_ROOT`. Compile all five candidate files. Back up the production files under `/opt/future/env-backup`, run the installer without `TARGET_ROOT`, compile production files, then restart only the mainline state service and Bridge. Roll back all five files together on any failure.
 
 The overlay must not change credentials, Gate 17840, order execution configuration, protection state or live-write switches.
+
+## Continuous observer
+
+`target-shadow-observer.mjs` is a single-run, dependency-free observer. It waits until the latest formal TARGET and Bridge audit have the same source fingerprint, then calls the idempotent Shadow-plan and comparison APIs. A mismatch writes `WAITING` and makes no API call. API errors write `ERROR` and fail the oneshot service. Results are atomically written to `/var/lib/target-shadow-observer/status.json`.
+
+Install the versioned service/timer and a root-only `/etc/target-shadow-observer.env`. The observer never reads exchange credentials and can connect only to localhost. The current preview bootstrap administrator identity may be used during the single-account Canary stage; replace it with a dedicated OIDC/service principal restricted to planner permissions before any broader deployment.

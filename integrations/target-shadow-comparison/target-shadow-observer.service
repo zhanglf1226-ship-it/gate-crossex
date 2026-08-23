@@ -1,0 +1,30 @@
+[Unit]
+Description=Gate CrossEx TARGET Shadow Comparison Observer
+After=gate-crossex-preview.service realtrading-bridge.service binanceexchange-real-trading-state-mainline.service
+Wants=gate-crossex-preview.service
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+EnvironmentFile=/etc/target-shadow-observer.env
+ExecStart=/opt/gate-crossex/.runtime/bin/node /opt/gate-crossex-preview/integrations/target-shadow-comparison/target-shadow-observer.mjs
+StateDirectory=target-shadow-observer
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/opt/future/binance-exchange/artifacts/reports/real_trading_state_mainline.json /opt/future/real-trading/runtime/audits
+ReadWritePaths=/var/lib/target-shadow-observer
