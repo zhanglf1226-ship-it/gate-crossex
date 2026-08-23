@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 from flask import Flask
 
@@ -54,3 +56,37 @@ def test_auth_csrf_and_fixed_preview_proxy(monkeypatch):
     assert headers["X-GCT-Role"] == "admin"
     assert headers["X-GCT-Trading-Intent"] == "preview-order"
     assert body == order
+
+
+def test_shadow_status_and_comparisons_are_admin_only_fixed_reads(monkeypatch, tmp_path: Path):
+    status_file = tmp_path / "observer.json"
+    status_file.write_text(json.dumps({"state": "COMPARED", "comparisonStatus": "MATCH"}), encoding="utf-8")
+    os.environ["PLATFORM_PREVIEW_OBSERVER_STATUS"] = str(status_file)
+    app = create_app()
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"comparisons": [{"status": "MATCH", "confidence": "HIGH"}]}
+
+    def fake_request(method, url, headers, json, timeout):
+        calls.append((method, url, headers, json, timeout))
+        return Response()
+
+    monkeypatch.setattr("platform_preview_bff.http_requests.request", fake_request)
+    client = app.test_client()
+    assert client.get("/api/platform-preview/shadow-status").status_code == 401
+    assert client.get("/api/platform-preview/shadow-comparisons").status_code == 401
+    assert client.post("/platform-preview/login", json={"password": "admin-secret"}).status_code == 200
+    assert client.get("/api/platform-preview/shadow-status").get_json()["state"] == "COMPARED"
+    comparisons = client.get("/api/platform-preview/shadow-comparisons")
+    assert comparisons.status_code == 200
+    assert comparisons.get_json()["comparisons"][0]["confidence"] == "HIGH"
+    method, url, headers, body, _timeout = calls[-1]
+    assert method == "GET"
+    assert url.endswith("/api/v1/strategies/target-shadow-comparisons")
+    assert body is None
+    assert headers["X-GCT-Role"] == "admin"

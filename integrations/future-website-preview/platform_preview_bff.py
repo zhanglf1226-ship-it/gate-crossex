@@ -8,6 +8,7 @@ import os
 import secrets
 import time
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import requests as http_requests
@@ -44,6 +45,7 @@ def _config() -> dict[str, Any]:
         "secret": os.environ.get("PLATFORM_PREVIEW_BFF_SECRET", ""),
         "account_id": os.environ.get("PLATFORM_PREVIEW_ACCOUNT_ID", "preview-gate-default"),
         "user_id": os.environ.get("PLATFORM_PREVIEW_ADMIN_USER_ID", "website-preview-admin"),
+        "observer_status": os.environ.get("PLATFORM_PREVIEW_OBSERVER_STATUS", "/var/lib/target-shadow-observer/status.json"),
         "timeout": 5,
     }
 
@@ -197,6 +199,33 @@ def status():
         discovery = http_requests.get(config["url"] + "/api/system/discovery", timeout=config["timeout"]).json()
         risk, risk_status = _upstream("GET", "/api/v1/risk/execution-policy")
         return jsonify({"health": health, "discovery": discovery, "risk": risk, "risk_status": risk_status})
+    except http_requests.RequestException:
+        return jsonify({"error": "platform_preview_unavailable"}), 503
+
+
+@preview_blueprint.get("/api/platform-preview/shadow-status")
+def shadow_status():
+    denied = _require_admin()
+    if denied:
+        return denied
+    path = Path(_config()["observer_status"])
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("invalid observer status")
+        return jsonify(payload)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return jsonify({"error": "shadow_observer_status_unavailable"}), 503
+
+
+@preview_blueprint.get("/api/platform-preview/shadow-comparisons")
+def shadow_comparisons():
+    denied = _require_admin()
+    if denied:
+        return denied
+    try:
+        payload, status_code = _upstream("GET", "/api/v1/strategies/target-shadow-comparisons")
+        return jsonify(payload), status_code
     except http_requests.RequestException:
         return jsonify({"error": "platform_preview_unavailable"}), 503
 
