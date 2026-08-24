@@ -461,7 +461,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const shadowAccountId = config.cloudDefaultAccountId ?? '__cloud_account_unconfigured__';
   const targetShadowPlans = new TargetShadowPlanStore(database, shadowAccountId);
   const targetShadowComparisons = new TargetShadowComparisonStore(database, shadowAccountId);
-  const protectionReconciliations = config.protectionBookPath ? new ProtectionReconciliationStore(database, shadowAccountId, config.protectionBookPath) : null;
+  const protectionReconciliations = config.protectionBookPath ? new ProtectionReconciliationStore(database, shadowAccountId, config.protectionBookPath, config.accountSnapshotPath ?? undefined, config.accountSnapshotHmacSecret ?? undefined) : null;
   const tradingRuntime = new TradingRuntime(database, tradingSession, credentialVault, crossExGateway, {
     beforeCreateOrder: config.deploymentMode === 'cloud'
       ? (order, identity, metadata) => {
