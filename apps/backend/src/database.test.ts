@@ -153,6 +153,8 @@ describe('database migrations', () => {
       strategyLogsDeleted: 1,
       fillsDeleted: 2,
       ordersDeleted: 2,
+      shadowComparisonsDeleted: 0,
+      shadowPlansDeleted: 0,
     });
     expect(database.prepare('SELECT id FROM execution_strategy_logs ORDER BY id').all())
       .toEqual([{ id: 'log-running' }]);
@@ -160,6 +162,31 @@ describe('database migrations', () => {
       .toEqual([{ id: 'order-active' }]);
     expect(database.prepare('SELECT id FROM execution_fills ORDER BY id').all())
       .toEqual([{ id: 'fill-active' }]);
+    database.close();
+  });
+
+  it('prunes only expired shadow evidence while preserving the 30-day boundary and referenced plans', () => {
+    const location = temporaryDatabasePath();
+    const database = openDatabase(location.path, resolve(process.cwd(), '../../migrations'));
+    const insertPlan = database.prepare(`INSERT INTO target_shadow_plans
+      (id,account_id,creator_user_id,request_hash,position_fingerprint,plan_fingerprint,compiler_version,target_state_json,compiled_plan_json,execution_allowed,created_at)
+      VALUES (?, 'acct', 'planner', ?, ?, ?, 'v1', '{}', '{}', 0, ?)`);
+    const old = '2026-07-24T00:00:00.000Z', boundary = '2026-07-25T00:00:00.000Z', recent = '2026-08-23T00:00:00.000Z';
+    for (const [id, created] of [['old-orphan', old], ['old-expired-comparison', old], ['old-recent-comparison', old], ['boundary', boundary], ['recent', recent]]) {
+      insertPlan.run(id, `request-${id}`, `position-${id}`, `plan-${id}`, created);
+    }
+    const insertComparison = database.prepare(`INSERT INTO target_shadow_comparisons
+      (id,account_id,shadow_plan_id,bridge_audit_path,bridge_audit_fingerprint,status,confidence,comparison_json,created_at)
+      VALUES (?, 'acct', ?, 'audit', ?, 'MATCH', 'HIGH', '{}', ?)`);
+    insertComparison.run('expired-comparison', 'old-expired-comparison', 'audit-expired', old);
+    insertComparison.run('recent-comparison', 'old-recent-comparison', 'audit-recent', recent);
+    const result = runDatabaseMaintenance(database, Date.parse('2026-08-24T00:00:00.000Z'));
+    expect(result.shadowComparisonsDeleted).toBe(1);
+    expect(result.shadowPlansDeleted).toBe(2);
+    expect(database.prepare('SELECT id FROM target_shadow_plans ORDER BY id').all()).toEqual([
+      { id: 'boundary' }, { id: 'old-recent-comparison' }, { id: 'recent' },
+    ]);
+    expect(database.prepare('SELECT id FROM target_shadow_comparisons').all()).toEqual([{ id: 'recent-comparison' }]);
     database.close();
   });
 
