@@ -932,6 +932,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (request.method === 'GET') return ['viewer', 'planner', 'approver', 'admin', 'auditor'];
     if (path === '/api/v1/trading/order-previews' || path === '/api/v1/strategies/target-state-previews'
       || path === '/api/v1/strategies/target-shadow-plans'
+      || path === '/api/v1/reconciliation/protection-book'
       || (path.startsWith('/api/v1/strategies/target-shadow-plans/') && path.endsWith('/comparisons'))) {
       return ['planner', 'admin'];
     }
