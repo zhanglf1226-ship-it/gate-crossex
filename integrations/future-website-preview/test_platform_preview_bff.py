@@ -6,7 +6,7 @@ from pathlib import Path
 
 from flask import Flask
 
-from platform_preview_bff import preview_blueprint
+from platform_preview_bff import _preview_url, preview_blueprint
 
 
 def create_app() -> Flask:
@@ -17,6 +17,15 @@ def create_app() -> Flask:
     app.secret_key = "test-secret"
     app.register_blueprint(preview_blueprint)
     return app
+
+
+def test_preview_url_rejects_non_loopback_upstreams(monkeypatch):
+    monkeypatch.setenv("PLATFORM_PREVIEW_URL", "https://attacker.example")
+    try:
+        _preview_url()
+        raise AssertionError("expected loopback validation failure")
+    except RuntimeError as error:
+        assert "loopback Canary" in str(error)
 
 
 def test_auth_csrf_and_fixed_preview_proxy(monkeypatch):
@@ -68,25 +77,33 @@ def test_shadow_status_and_comparisons_are_admin_only_fixed_reads(monkeypatch, t
     class Response:
         status_code = 200
 
-        @staticmethod
-        def json():
-            return {"comparisons": [{"status": "MATCH", "confidence": "HIGH"}]}
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
 
     def fake_request(method, url, headers, json, timeout):
         calls.append((method, url, headers, json, timeout))
-        return Response()
+        if url.endswith("/target-shadow-acceptance-summary"):
+            return Response({"readiness": "NOT_READY", "gates": {}})
+        return Response({"comparisons": [{"status": "MATCH", "confidence": "HIGH"}]})
 
     monkeypatch.setattr("platform_preview_bff.http_requests.request", fake_request)
     client = app.test_client()
     assert client.get("/api/platform-preview/shadow-status").status_code == 401
     assert client.get("/api/platform-preview/shadow-comparisons").status_code == 401
+    assert client.get("/api/platform-preview/shadow-acceptance-summary").status_code == 401
     assert client.post("/platform-preview/login", json={"password": "admin-secret"}).status_code == 200
     assert client.get("/api/platform-preview/shadow-status").get_json()["state"] == "COMPARED"
     comparisons = client.get("/api/platform-preview/shadow-comparisons")
     assert comparisons.status_code == 200
     assert comparisons.get_json()["comparisons"][0]["confidence"] == "HIGH"
+    summary = client.get("/api/platform-preview/shadow-acceptance-summary")
+    assert summary.status_code == 200
+    assert summary.get_json()["readiness"] == "NOT_READY"
     method, url, headers, body, _timeout = calls[-1]
     assert method == "GET"
-    assert url.endswith("/api/v1/strategies/target-shadow-comparisons")
+    assert url.endswith("/api/v1/strategies/target-shadow-acceptance-summary")
     assert body is None
     assert headers["X-GCT-Role"] == "admin"

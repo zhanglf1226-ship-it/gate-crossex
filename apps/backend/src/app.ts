@@ -1270,7 +1270,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }, async (request, reply) => {
     const actor = cloudPrincipals.get(request);
     if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
-    return { comparisons: targetShadowComparisons.list() };
+    return { comparisons: targetShadowComparisons.list(actor.accountId) };
+  });
+
+  app.get('/api/v1/strategies/target-shadow-acceptance-summary', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async (request, reply) => {
+    const actor = cloudPrincipals.get(request);
+    if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+    return targetShadowComparisons.summary(actor.accountId);
   });
 
   app.get('/api/trading/leverage/:symbol', {

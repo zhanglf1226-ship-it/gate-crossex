@@ -38,9 +38,16 @@ def _configure_host(state) -> None:
     )
 
 
+def _preview_url() -> str:
+    configured = os.environ.get("PLATFORM_PREVIEW_URL", "http://127.0.0.1:17841").rstrip("/")
+    if configured not in {"http://127.0.0.1:17841", "http://localhost:17841"}:
+        raise RuntimeError("PLATFORM_PREVIEW_URL must use the loopback Canary on port 17841")
+    return configured
+
+
 def _config() -> dict[str, Any]:
     return {
-        "url": os.environ.get("PLATFORM_PREVIEW_URL", "http://127.0.0.1:17841").rstrip("/"),
+        "url": _preview_url(),
         "password": os.environ.get("PLATFORM_PREVIEW_ADMIN_PASSWORD", ""),
         "secret": os.environ.get("PLATFORM_PREVIEW_BFF_SECRET", ""),
         "account_id": os.environ.get("PLATFORM_PREVIEW_ACCOUNT_ID", "preview-gate-default"),
@@ -225,6 +232,18 @@ def shadow_comparisons():
         return denied
     try:
         payload, status_code = _upstream("GET", "/api/v1/strategies/target-shadow-comparisons")
+        return jsonify(payload), status_code
+    except http_requests.RequestException:
+        return jsonify({"error": "platform_preview_unavailable"}), 503
+
+
+@preview_blueprint.get("/api/platform-preview/shadow-acceptance-summary")
+def shadow_acceptance_summary():
+    denied = _require_admin()
+    if denied:
+        return denied
+    try:
+        payload, status_code = _upstream("GET", "/api/v1/strategies/target-shadow-acceptance-summary")
         return jsonify(payload), status_code
     except http_requests.RequestException:
         return jsonify({"error": "platform_preview_unavailable"}), 503
