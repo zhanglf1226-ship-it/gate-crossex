@@ -66,12 +66,14 @@ export async function run(environment = process.env) {
     statusFile: environment.GCT_SHADOW_OBSERVER_STATUS ?? '/var/lib/target-shadow-observer/status.json',
     secret: environment.GCT_BFF_HMAC_SECRET ?? '',
     identity: {
-      userId: environment.GCT_SHADOW_OBSERVER_USER_ID ?? 'preview-bootstrap-admin',
-      role: environment.GCT_SHADOW_OBSERVER_ROLE ?? 'admin',
+      userId: environment.GCT_SHADOW_OBSERVER_USER_ID ?? '',
+      role: environment.GCT_SHADOW_OBSERVER_ROLE ?? '',
       accountId: environment.GCT_CLOUD_ACCOUNT_ID ?? 'preview-gate-default',
     },
   };
   if (config.secret.length < 32) throw new Error('observer_bff_secret_missing');
+  if (!config.identity.userId) throw new Error('observer_user_id_missing');
+  if (config.identity.role !== 'planner') throw new Error('observer_role_must_be_planner');
   const checkedAt = new Date().toISOString();
   try {
     const target = JSON.parse(await readFile(config.targetFile, 'utf8'));

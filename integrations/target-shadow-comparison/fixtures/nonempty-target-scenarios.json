@@ -1,0 +1,18 @@
+{
+  "contract": "target-shadow-offline-drill/v1",
+  "markPrice": "100",
+  "venueSnapshot": {
+    "venues": {
+      "GATE": {"symbols": {"BTCUSDT": {"price": 100, "bid": 99.99, "ask": 100.01, "depth_notional": 100000}}},
+      "BINANCE": {"symbols": {"BTCUSDT": {"price": 100, "bid": 99.98, "ask": 100.02, "depth_notional": 100000}}}
+    }
+  },
+  "scenarios": [
+    {"id": "empty-open", "targetQuoteQty": 100, "targetSide": "BUY", "positions": [], "expectedKinds": ["OPEN"]},
+    {"id": "same-side-reduce", "targetQuoteQty": 300, "targetSide": "BUY", "positions": [{"symbol": "GATE_FUTURE_BTC_USDT", "venue": "GATE", "side": "BUY", "notional": 500}], "expectedKinds": ["REDUCE"]},
+    {"id": "reverse-flatten-open", "targetQuoteQty": 1000, "targetSide": "BUY", "positions": [{"symbol": "BINANCE_FUTURE_BTC_USDT", "venue": "BINANCE", "side": "SELL", "notional": 400}], "expectedKinds": ["FLATTEN", "OPEN"]},
+    {"id": "zero-target-flatten", "targetQuoteQty": 0, "targetSide": "BUY", "positions": [{"symbol": "GATE_FUTURE_BTC_USDT", "venue": "GATE", "side": "BUY", "notional": 500}], "expectedKinds": ["FLATTEN"]},
+    {"id": "multi-venue-reduce", "targetQuoteQty": 300, "targetSide": "BUY", "positions": [{"symbol": "GATE_FUTURE_BTC_USDT", "venue": "GATE", "side": "BUY", "notional": 800}, {"symbol": "BINANCE_FUTURE_BTC_USDT", "venue": "BINANCE", "side": "BUY", "notional": 200}], "expectedKinds": ["REDUCE", "REDUCE"]},
+    {"id": "multi-clip-open", "targetQuoteQty": 2500, "targetSide": "BUY", "positions": [], "expectedKinds": ["OPEN", "OPEN", "OPEN"]}
+  ]
+}

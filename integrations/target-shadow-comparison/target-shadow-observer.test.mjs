@@ -14,12 +14,16 @@ async function fixture(bridgeFingerprint = fingerprint) {
   await writeFile(join(auditDir, 'bridge_run_001_20260823_000000.json'), JSON.stringify({ target_request_hash: bridgeFingerprint, shadow_actions: [] }));
   return { root, auditDir, targetFile, statusFile };
 }
-const env = (f) => ({ GCT_SHADOW_TARGET_FILE: f.targetFile, GCT_BRIDGE_AUDIT_DIR: f.auditDir, GCT_SHADOW_OBSERVER_STATUS: f.statusFile, GCT_BFF_HMAC_SECRET: 'x'.repeat(32), GCT_CLOUD_ACCOUNT_ID: 'acct' });
+const env = (f) => ({ GCT_SHADOW_TARGET_FILE: f.targetFile, GCT_BRIDGE_AUDIT_DIR: f.auditDir, GCT_SHADOW_OBSERVER_STATUS: f.statusFile, GCT_BFF_HMAC_SECRET: 'x'.repeat(32), GCT_CLOUD_ACCOUNT_ID: 'acct', GCT_SHADOW_OBSERVER_USER_ID: 'observer', GCT_SHADOW_OBSERVER_ROLE: 'planner' });
 
 test('canonical JSON and signature body hash are deterministic', () => {
   assert.equal(canonicalJson({ b: 1, a: [true, 'x'] }), '{"a":[true,"x"],"b":1}');
   const headers = signedHeaders('x'.repeat(32), 'POST', '/path', { b: 1, a: 2 }, { userId: 'u', role: 'admin', accountId: 'a' }, 'shadow');
   assert.match(headers['x-gct-body-sha256'], /^[a-f0-9]{64}$/); assert.ok(headers['x-gct-signature']);
+});
+
+test('rejects identities broader than planner', async () => {
+  const f = await fixture(); await assert.rejects(run({ ...env(f), GCT_SHADOW_OBSERVER_ROLE: 'admin' }), /observer_role_must_be_planner/);
 });
 
 test('waits without API calls when fingerprints differ', async () => {

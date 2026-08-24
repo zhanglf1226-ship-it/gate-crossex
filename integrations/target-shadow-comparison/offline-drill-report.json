@@ -1,0 +1,376 @@
+{
+  "contract": "target-shadow-offline-drill-report/v1",
+  "generatedAt": "2026-08-24T02:50:55.022Z",
+  "productionEvidence": false,
+  "counts": {
+    "total": 6,
+    "match": 5,
+    "different": 1
+  },
+  "results": [
+    {
+      "id": "empty-open",
+      "status": "MATCH",
+      "exposureSemanticStatus": "MATCH",
+      "orderingStatus": "MATCH",
+      "shadowPhaseStatus": "MATCH",
+      "executionShapeStatus": "MATCH",
+      "legacyPhaseEvidence": "UNAVAILABLE_ROUTER_SEQUENCE_ONLY",
+      "expectedKinds": "OPEN",
+      "shadowKinds": "OPEN",
+      "shadowActions": [
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "100",
+          "reduceOnly": false,
+          "reason": "increase_target_exposure",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 1,
+          "clipCount": 1
+        }
+      ],
+      "legacyActions": [
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "100.0"
+        }
+      ],
+      "shadowAggregate": {
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY": "100"
+      },
+      "legacyAggregate": {
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY": "100"
+      },
+      "shadowShape": [
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|100"
+      ],
+      "legacyShape": [
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|100"
+      ],
+      "clipCountDifference": 0
+    },
+    {
+      "id": "same-side-reduce",
+      "status": "MATCH",
+      "exposureSemanticStatus": "MATCH",
+      "orderingStatus": "MATCH",
+      "shadowPhaseStatus": "MATCH",
+      "executionShapeStatus": "MATCH",
+      "legacyPhaseEvidence": "UNAVAILABLE_ROUTER_SEQUENCE_ONLY",
+      "expectedKinds": "REDUCE",
+      "shadowKinds": "REDUCE",
+      "shadowActions": [
+        {
+          "kind": "REDUCE",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "SELL",
+          "quoteQuantity": "200",
+          "reduceOnly": true,
+          "reason": "rebalance_existing_position",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 1,
+          "clipCount": 1
+        }
+      ],
+      "legacyActions": [
+        {
+          "kind": "REDUCE",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "SELL",
+          "quoteQuantity": "200.0"
+        }
+      ],
+      "shadowAggregate": {
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL": "200"
+      },
+      "legacyAggregate": {
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL": "200"
+      },
+      "shadowShape": [
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL|200"
+      ],
+      "legacyShape": [
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL|200"
+      ],
+      "clipCountDifference": 0
+    },
+    {
+      "id": "reverse-flatten-open",
+      "status": "MATCH",
+      "exposureSemanticStatus": "MATCH",
+      "orderingStatus": "MATCH",
+      "shadowPhaseStatus": "MATCH",
+      "executionShapeStatus": "MATCH",
+      "legacyPhaseEvidence": "UNAVAILABLE_ROUTER_SEQUENCE_ONLY",
+      "expectedKinds": "FLATTEN,OPEN",
+      "shadowKinds": "FLATTEN,OPEN",
+      "shadowActions": [
+        {
+          "kind": "FLATTEN",
+          "symbol": "BINANCE_FUTURE_BTC_USDT",
+          "venue": "BINANCE",
+          "side": "BUY",
+          "quoteQuantity": "400",
+          "reduceOnly": true,
+          "reason": "flatten_opposite_position",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 1,
+          "clipCount": 1
+        },
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "1000",
+          "reduceOnly": false,
+          "reason": "increase_target_exposure",
+          "phase": 2,
+          "dependsOnPhase": 1,
+          "clipIndex": 1,
+          "clipCount": 1
+        }
+      ],
+      "legacyActions": [
+        {
+          "kind": "FLATTEN",
+          "symbol": "BINANCE_FUTURE_BTC_USDT",
+          "venue": "BINANCE",
+          "side": "BUY",
+          "quoteQuantity": "400.0"
+        },
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "1000.0"
+        }
+      ],
+      "shadowAggregate": {
+        "FLATTEN|BINANCE_FUTURE_BTC_USDT|BINANCE|BUY": "400",
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY": "1000"
+      },
+      "legacyAggregate": {
+        "FLATTEN|BINANCE_FUTURE_BTC_USDT|BINANCE|BUY": "400",
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY": "1000"
+      },
+      "shadowShape": [
+        "FLATTEN|BINANCE_FUTURE_BTC_USDT|BINANCE|BUY|400",
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|1000"
+      ],
+      "legacyShape": [
+        "FLATTEN|BINANCE_FUTURE_BTC_USDT|BINANCE|BUY|400",
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|1000"
+      ],
+      "clipCountDifference": 0
+    },
+    {
+      "id": "zero-target-flatten",
+      "status": "MATCH",
+      "exposureSemanticStatus": "MATCH",
+      "orderingStatus": "MATCH",
+      "shadowPhaseStatus": "MATCH",
+      "executionShapeStatus": "MATCH",
+      "legacyPhaseEvidence": "UNAVAILABLE_ROUTER_SEQUENCE_ONLY",
+      "expectedKinds": "FLATTEN",
+      "shadowKinds": "FLATTEN",
+      "shadowActions": [
+        {
+          "kind": "FLATTEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "SELL",
+          "quoteQuantity": "500",
+          "reduceOnly": true,
+          "reason": "flatten_same_side_position",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 1,
+          "clipCount": 1
+        }
+      ],
+      "legacyActions": [
+        {
+          "kind": "FLATTEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "SELL",
+          "quoteQuantity": "500.0"
+        }
+      ],
+      "shadowAggregate": {
+        "FLATTEN|GATE_FUTURE_BTC_USDT|GATE|SELL": "500"
+      },
+      "legacyAggregate": {
+        "FLATTEN|GATE_FUTURE_BTC_USDT|GATE|SELL": "500"
+      },
+      "shadowShape": [
+        "FLATTEN|GATE_FUTURE_BTC_USDT|GATE|SELL|500"
+      ],
+      "legacyShape": [
+        "FLATTEN|GATE_FUTURE_BTC_USDT|GATE|SELL|500"
+      ],
+      "clipCountDifference": 0
+    },
+    {
+      "id": "multi-venue-reduce",
+      "status": "MATCH",
+      "exposureSemanticStatus": "MATCH",
+      "orderingStatus": "MATCH",
+      "shadowPhaseStatus": "MATCH",
+      "executionShapeStatus": "MATCH",
+      "legacyPhaseEvidence": "UNAVAILABLE_ROUTER_SEQUENCE_ONLY",
+      "expectedKinds": "REDUCE,REDUCE",
+      "shadowKinds": "REDUCE,REDUCE",
+      "shadowActions": [
+        {
+          "kind": "REDUCE",
+          "symbol": "BINANCE_FUTURE_BTC_USDT",
+          "venue": "BINANCE",
+          "side": "SELL",
+          "quoteQuantity": "140",
+          "reduceOnly": true,
+          "reason": "rebalance_existing_position",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 1,
+          "clipCount": 1
+        },
+        {
+          "kind": "REDUCE",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "SELL",
+          "quoteQuantity": "560",
+          "reduceOnly": true,
+          "reason": "rebalance_existing_position",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 1,
+          "clipCount": 1
+        }
+      ],
+      "legacyActions": [
+        {
+          "kind": "REDUCE",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "SELL",
+          "quoteQuantity": "560.0"
+        },
+        {
+          "kind": "REDUCE",
+          "symbol": "BINANCE_FUTURE_BTC_USDT",
+          "venue": "BINANCE",
+          "side": "SELL",
+          "quoteQuantity": "140.0"
+        }
+      ],
+      "shadowAggregate": {
+        "REDUCE|BINANCE_FUTURE_BTC_USDT|BINANCE|SELL": "140",
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL": "560"
+      },
+      "legacyAggregate": {
+        "REDUCE|BINANCE_FUTURE_BTC_USDT|BINANCE|SELL": "140",
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL": "560"
+      },
+      "shadowShape": [
+        "REDUCE|BINANCE_FUTURE_BTC_USDT|BINANCE|SELL|140",
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL|560"
+      ],
+      "legacyShape": [
+        "REDUCE|BINANCE_FUTURE_BTC_USDT|BINANCE|SELL|140",
+        "REDUCE|GATE_FUTURE_BTC_USDT|GATE|SELL|560"
+      ],
+      "clipCountDifference": 0
+    },
+    {
+      "id": "multi-clip-open",
+      "status": "DIFFERENT",
+      "exposureSemanticStatus": "MATCH",
+      "orderingStatus": "MATCH",
+      "shadowPhaseStatus": "MATCH",
+      "executionShapeStatus": "DIFFERENT",
+      "legacyPhaseEvidence": "UNAVAILABLE_ROUTER_SEQUENCE_ONLY",
+      "expectedKinds": "OPEN,OPEN,OPEN",
+      "shadowKinds": "OPEN,OPEN,OPEN",
+      "shadowActions": [
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "1000",
+          "reduceOnly": false,
+          "reason": "increase_target_exposure",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 1,
+          "clipCount": 3
+        },
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "1000",
+          "reduceOnly": false,
+          "reason": "increase_target_exposure",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 2,
+          "clipCount": 3
+        },
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "500",
+          "reduceOnly": false,
+          "reason": "increase_target_exposure",
+          "phase": 1,
+          "dependsOnPhase": null,
+          "clipIndex": 3,
+          "clipCount": 3
+        }
+      ],
+      "legacyActions": [
+        {
+          "kind": "OPEN",
+          "symbol": "GATE_FUTURE_BTC_USDT",
+          "venue": "GATE",
+          "side": "BUY",
+          "quoteQuantity": "2500.0"
+        }
+      ],
+      "shadowAggregate": {
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY": "2500"
+      },
+      "legacyAggregate": {
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY": "2500"
+      },
+      "shadowShape": [
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|1000",
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|1000",
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|500"
+      ],
+      "legacyShape": [
+        "OPEN|GATE_FUTURE_BTC_USDT|GATE|BUY|2500"
+      ],
+      "clipCountDifference": 2
+    }
+  ]
+}
