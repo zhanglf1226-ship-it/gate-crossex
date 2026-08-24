@@ -66,7 +66,9 @@ def normalize_signal_payload(payload: Any) -> List[Dict[str, Any]]:
     text = path.read_text(encoding="utf-8")
     start = text.index(marker) + len(marker)
     payload_line = "    payload = _run_json_command(command, cwd=cwd)"
-    if payload_line in text[start:]:
+    next_function = text.find("\n\ndef ", start)
+    function_body = text[start:next_function if next_function != -1 else len(text)]
+    if payload_line in function_body:
         text = text[:start] + text[start:].replace(payload_line, "    return normalize_signal_payload(load_signal_payload_from_command(command, cwd=cwd))", 1)
         body_start = text.index("    rows: List[Dict[str, Any]] = []", start)
         body_end = text.index("\n\n\ndef load_price_snapshot_from_command", body_start)
@@ -82,6 +84,7 @@ def install_router(path: Path) -> None:
 
 
 def install_adapter(path: Path) -> None:
+    replace_once(path, "import sys\nfrom pathlib import Path", "import os\nimport sys\nfrom decimal import Decimal, InvalidOperation\nfrom pathlib import Path")
     text = path.read_text(encoding="utf-8")
     text = text.replace("from .providers import load_signals_from_command", "from .providers import load_signal_payload_from_command, load_signals_from_command, normalize_signal_payload")
     text = text.replace("from strategy.providers import load_signals_from_command", "from strategy.providers import load_signal_payload_from_command, load_signals_from_command, normalize_signal_payload")
@@ -102,9 +105,33 @@ def install_adapter(path: Path) -> None:
     return actions
 
 
+def _project_shadow_action_clips(actions: List[Dict[str, str]], clip_notional: str) -> List[Dict[str, str]]:
+    try:
+        limit = Decimal(str(clip_notional))
+        if not limit.is_finite() or limit <= 0:
+            return []
+    except (InvalidOperation, ValueError):
+        return []
+    projected: List[Dict[str, str]] = []
+    for action in actions:
+        try:
+            remaining = Decimal(str(action.get("quoteQuantity") or "0"))
+        except (InvalidOperation, ValueError):
+            return []
+        if not remaining.is_finite() or remaining <= 0:
+            return []
+        count = int((remaining / limit).to_integral_value(rounding="ROUND_CEILING"))
+        for index in range(count):
+            amount = min(remaining, limit)
+            projected.append({**action, "quoteQuantity": format(amount, "f"), "clipIndex": str(index + 1), "clipCount": str(count)})
+            remaining -= amount
+    return projected
+
+
 def execute_signal_bridge_command_with_audit(''')
     replace_once(path, "    signals = load_signals_from_command(command, cwd=cwd)\n    protection_entries = _protection_entries_from_book(book_file)", "    signal_payload = load_signal_payload_from_command(command, cwd=cwd)\n    signals = normalize_signal_payload(signal_payload)\n    source_meta = signal_payload.get(\"meta\") if isinstance(signal_payload.get(\"meta\"), Mapping) else {}\n    source_state_fingerprint = str(source_meta.get(\"source_state_fingerprint\") or \"\").strip()\n    protection_entries = _protection_entries_from_book(book_file)")
     replace_once(path, '        "signal_source": str(command),\n        "signal_count": len(signals),', '        "signal_source": str(command),\n        "target_request_hash": source_state_fingerprint,\n        "shadow_actions": _shadow_actions_from_routed_signals(routed_signals),\n        "signal_count": len(signals),')
+    replace_once(path, '    combined_audit: Dict[str, Any] = {\n        "signal_source": str(command),\n        "target_request_hash": source_state_fingerprint,\n        "shadow_actions": _shadow_actions_from_routed_signals(routed_signals),', '    shadow_actions = _shadow_actions_from_routed_signals(routed_signals)\n    projected_clip_notional = str(os.environ.get("GCT_SHADOW_PROJECTED_CLIP_NOTIONAL") or "").strip()\n    try:\n        projected_limit = Decimal(projected_clip_notional)\n        projected_limit_valid = projected_limit.is_finite() and projected_limit > 0\n    except (InvalidOperation, ValueError):\n        projected_limit_valid = False\n    projected_shadow_actions = _project_shadow_action_clips(shadow_actions, projected_clip_notional) if projected_limit_valid else None\n    combined_audit: Dict[str, Any] = {\n        "signal_source": str(command),\n        "target_request_hash": source_state_fingerprint,\n        "shadow_actions": shadow_actions,\n        **({"projected_shadow_actions": projected_shadow_actions, "projected_clip_notional": projected_clip_notional} if projected_shadow_actions is not None else {}),')
 
 
 def main() -> None:
