@@ -13,6 +13,7 @@ export interface DatabaseMaintenanceResult {
   ordersDeleted: number;
   shadowComparisonsDeleted: number;
   shadowPlansDeleted: number;
+  protectionReconciliationsDeleted: number;
 }
 
 /**
@@ -64,6 +65,9 @@ export function runDatabaseMaintenance(
     const ordersDeleted = database.prepare(`
       DELETE FROM execution_orders WHERE ${eligibleOrderFilter}
     `).run(executionCutoff).changes;
+    const protectionReconciliationsDeleted = database.prepare(`
+      DELETE FROM protection_book_reconciliations WHERE created_at < ?
+    `).run(shadowCutoff).changes;
     const shadowComparisonsDeleted = database.prepare(`
       DELETE FROM target_shadow_comparisons WHERE created_at < ?
     `).run(shadowCutoff).changes;
@@ -82,6 +86,7 @@ export function runDatabaseMaintenance(
       ordersDeleted,
       shadowComparisonsDeleted,
       shadowPlansDeleted,
+      protectionReconciliationsDeleted,
     };
   })();
 }

@@ -87,6 +87,8 @@ def test_shadow_status_and_comparisons_are_admin_only_fixed_reads(monkeypatch, t
         calls.append((method, url, headers, json, timeout))
         if url.endswith("/target-shadow-acceptance-summary"):
             return Response({"readiness": "NOT_READY", "gates": {}})
+        if url.endswith("/api/v1/reconciliation/protection-book"):
+            return Response({"reconciliations": [{"status": "UNCOMPARABLE", "confidence": "LOW"}]})
         return Response({"comparisons": [{"status": "MATCH", "confidence": "HIGH"}]})
 
     monkeypatch.setattr("platform_preview_bff.http_requests.request", fake_request)
@@ -94,6 +96,7 @@ def test_shadow_status_and_comparisons_are_admin_only_fixed_reads(monkeypatch, t
     assert client.get("/api/platform-preview/shadow-status").status_code == 401
     assert client.get("/api/platform-preview/shadow-comparisons").status_code == 401
     assert client.get("/api/platform-preview/shadow-acceptance-summary").status_code == 401
+    assert client.get("/api/platform-preview/protection-reconciliations").status_code == 401
     assert client.post("/platform-preview/login", json={"password": "admin-secret"}).status_code == 200
     assert client.get("/api/platform-preview/shadow-status").get_json()["state"] == "COMPARED"
     comparisons = client.get("/api/platform-preview/shadow-comparisons")
@@ -102,8 +105,11 @@ def test_shadow_status_and_comparisons_are_admin_only_fixed_reads(monkeypatch, t
     summary = client.get("/api/platform-preview/shadow-acceptance-summary")
     assert summary.status_code == 200
     assert summary.get_json()["readiness"] == "NOT_READY"
+    protection = client.get("/api/platform-preview/protection-reconciliations")
+    assert protection.status_code == 200
+    assert protection.get_json()["reconciliations"][0]["status"] == "UNCOMPARABLE"
     method, url, headers, body, _timeout = calls[-1]
     assert method == "GET"
-    assert url.endswith("/api/v1/strategies/target-shadow-acceptance-summary")
+    assert url.endswith("/api/v1/reconciliation/protection-book")
     assert body is None
     assert headers["X-GCT-Role"] == "admin"

@@ -14,6 +14,7 @@ export interface BackendConfig {
   cloudDefaultAccountId: string | null;
   cloudBootstrapAdminUserId: string | null;
   bridgeAuditDir: string | null;
+  protectionBookPath: string | null;
   host: string;
   port: number;
   dataDir: string;
@@ -123,6 +124,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
     cloudDefaultAccountId,
     cloudBootstrapAdminUserId,
     bridgeAuditDir: environment.GCT_BRIDGE_AUDIT_DIR?.trim() ? resolve(environment.GCT_BRIDGE_AUDIT_DIR) : null,
+    protectionBookPath: environment.GCT_PROTECTION_BOOK_PATH?.trim() && (deploymentMode !== 'cloud' || resolve(environment.GCT_PROTECTION_BOOK_PATH) === '/opt/future/real-trading/runtime/protection_book.json') ? resolve(environment.GCT_PROTECTION_BOOK_PATH) : null,
     host,
     port,
     dataDir,

@@ -90,12 +90,18 @@ export async function run(environment = process.env) {
     const planResult = await api(config.baseUrl, config.secret, config.identity, 'POST', planPath, target, 'shadow-target-state');
     const comparisonPath = `${planPath}/${planResult.payload.planId}/comparisons`;
     const comparisonResult = await api(config.baseUrl, config.secret, config.identity, 'POST', comparisonPath, undefined, 'compare-shadow-plan');
+    const protectionResult = await api(config.baseUrl, config.secret, config.identity, 'POST', '/api/v1/reconciliation/protection-book', undefined, 'reconcile-protection-book');
     const status = {
       ...base, state: 'COMPARED', planId: planResult.payload.planId, planReused: Boolean(planResult.payload.reused),
       comparisonId: comparisonResult.payload.comparisonId, comparisonReused: Boolean(comparisonResult.payload.reused),
       comparisonStatus: comparisonResult.payload.status, confidence: comparisonResult.payload.confidence,
       reasons: comparisonResult.payload.reasons ?? [], shadowActionCount: comparisonResult.payload.shadowActions?.length ?? 0,
       legacyActionCount: comparisonResult.payload.legacyActions?.length ?? 0,
+      protectionReconciliationId: protectionResult.payload.reconciliationId,
+      protectionReconciliationReused: Boolean(protectionResult.payload.reused),
+      protectionReconciliationStatus: protectionResult.payload.status,
+      protectionReconciliationConfidence: protectionResult.payload.confidence,
+      protectionReconciliationReasons: protectionResult.payload.reasons ?? [],
     };
     await atomicStatus(config.statusFile, status);
     return status;

@@ -36,7 +36,8 @@ test('creates and compares aligned plans while preserving API idempotency result
   const f = await fixture(); const responses = [
     new Response(JSON.stringify({ planId: 'plan-1', reused: true }), { status: 200, headers: { 'content-type': 'application/json' } }),
     new Response(JSON.stringify({ comparisonId: 'comparison-1', reused: true, status: 'MATCH', confidence: 'HIGH', reasons: [], shadowActions: [], legacyActions: [] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    new Response(JSON.stringify({ reconciliationId: 'protection-1', reused: false, status: 'UNCOMPARABLE', confidence: 'LOW', reasons: ['account_snapshot_credentials_unavailable'] }), { status: 201, headers: { 'content-type': 'application/json' } }),
   ];
   globalThis.fetch = async () => responses.shift(); const result = await run(env(f));
-  assert.deepEqual({ state: result.state, status: result.comparisonStatus, confidence: result.confidence, planReused: result.planReused, comparisonReused: result.comparisonReused }, { state: 'COMPARED', status: 'MATCH', confidence: 'HIGH', planReused: true, comparisonReused: true });
+  assert.deepEqual({ state: result.state, status: result.comparisonStatus, confidence: result.confidence, planReused: result.planReused, comparisonReused: result.comparisonReused, protectionStatus: result.protectionReconciliationStatus }, { state: 'COMPARED', status: 'MATCH', confidence: 'HIGH', planReused: true, comparisonReused: true, protectionStatus: 'UNCOMPARABLE' });
 });

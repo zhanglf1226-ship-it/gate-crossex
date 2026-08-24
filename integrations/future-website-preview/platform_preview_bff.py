@@ -249,6 +249,18 @@ def shadow_acceptance_summary():
         return jsonify({"error": "platform_preview_unavailable"}), 503
 
 
+@preview_blueprint.get("/api/platform-preview/protection-reconciliations")
+def protection_reconciliations():
+    denied = _require_admin()
+    if denied:
+        return denied
+    try:
+        payload, status_code = _upstream("GET", "/api/v1/reconciliation/protection-book")
+        return jsonify(payload), status_code
+    except http_requests.RequestException:
+        return jsonify({"error": "platform_preview_unavailable"}), 503
+
+
 @preview_blueprint.post("/api/platform-preview/order-previews")
 def create_order_preview():
     denied = _require_admin()

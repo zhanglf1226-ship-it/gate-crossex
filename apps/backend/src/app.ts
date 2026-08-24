@@ -73,6 +73,7 @@ import { ExecutionRiskError, ExecutionRiskGuard, ExecutionRiskPolicySchema } fro
 import { buildTargetStatePreview } from './target-state-preview.js';
 import { TargetShadowPlanError, TargetShadowPlanStore } from './target-shadow-plan.js';
 import { readLatestBridgeAudit, TargetShadowComparisonStore } from './target-shadow-comparison.js';
+import { ProtectionReconciliationStore } from './protection-reconciliation.js';
 import { CrossExPrivateStream } from './private-stream.js';
 import { LivePortfolioStore, type LivePortfolioSnapshot } from './live-portfolio.js';
 import { readDatabaseStatus } from './database.js';
@@ -460,6 +461,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const shadowAccountId = config.cloudDefaultAccountId ?? '__cloud_account_unconfigured__';
   const targetShadowPlans = new TargetShadowPlanStore(database, shadowAccountId);
   const targetShadowComparisons = new TargetShadowComparisonStore(database, shadowAccountId);
+  const protectionReconciliations = config.protectionBookPath ? new ProtectionReconciliationStore(database, shadowAccountId, config.protectionBookPath) : null;
   const tradingRuntime = new TradingRuntime(database, tradingSession, credentialVault, crossExGateway, {
     beforeCreateOrder: config.deploymentMode === 'cloud'
       ? (order, identity, metadata) => {
@@ -1279,6 +1281,29 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     const actor = cloudPrincipals.get(request);
     if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
     return targetShadowComparisons.summary(actor.accountId);
+  });
+
+  app.post('/api/v1/reconciliation/protection-book', {
+    preHandler: requireCloudRoles(['planner', 'admin']),
+  }, async (request, reply) => {
+    const actor = cloudPrincipals.get(request);
+    if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+    if (!protectionReconciliations) return reply.code(503).send({ error: 'protection_book_unconfigured' });
+    const result = protectionReconciliations.create(actor.accountId);
+    addAuditEvent(database, result.reused ? 'protection_reconciliation_reused' : 'protection_reconciliation_created', {
+      reconciliationId: result.report.reconciliationId, accountId: actor.accountId, actorUserId: actor.userId,
+      status: result.report.status, confidence: result.report.confidence,
+    });
+    return reply.code(result.reused ? 200 : 201).send({ ...result.report, reused: result.reused });
+  });
+
+  app.get('/api/v1/reconciliation/protection-book', {
+    preHandler: requireCloudRoles(['viewer', 'planner', 'approver', 'admin', 'auditor']),
+  }, async (request, reply) => {
+    const actor = cloudPrincipals.get(request);
+    if (!actor) return reply.code(401).send({ error: 'cloud_identity_required' });
+    if (!protectionReconciliations) return reply.code(503).send({ error: 'protection_book_unconfigured' });
+    return { reconciliations: protectionReconciliations.list(actor.accountId) };
   });
 
   app.get('/api/trading/leverage/:symbol', {
