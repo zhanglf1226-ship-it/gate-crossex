@@ -14,6 +14,7 @@ export interface DatabaseMaintenanceResult {
   shadowComparisonsDeleted: number;
   shadowPlansDeleted: number;
   protectionReconciliationsDeleted: number;
+  importedAccountSnapshotsDeleted: number;
 }
 
 /**
@@ -27,7 +28,8 @@ export function runDatabaseMaintenance(
 ): DatabaseMaintenanceResult {
   const auditCutoff = new Date(now - AUDIT_RETENTION_MS).toISOString();
   const executionCutoff = new Date(now - EXECUTION_RETENTION_MS).toISOString();
-  const shadowCutoff = new Date(now - SHADOW_RETENTION_MS).toISOString();
+  const shadowCutoffMs = now - SHADOW_RETENTION_MS;
+  const shadowCutoff = new Date(shadowCutoffMs).toISOString();
   return database.transaction(() => {
     const expiredAudit = database.prepare('DELETE FROM audit_events WHERE created_at < ?').run(auditCutoff).changes;
     const excessAudit = database.prepare(`
@@ -65,6 +67,9 @@ export function runDatabaseMaintenance(
     const ordersDeleted = database.prepare(`
       DELETE FROM execution_orders WHERE ${eligibleOrderFilter}
     `).run(executionCutoff).changes;
+    const importedAccountSnapshotsDeleted = database.prepare(`
+      DELETE FROM imported_account_snapshots WHERE imported_at < ? AND generated_at_ms < ?
+    `).run(shadowCutoff, shadowCutoffMs).changes;
     const protectionReconciliationsDeleted = database.prepare(`
       DELETE FROM protection_book_reconciliations WHERE created_at < ?
     `).run(shadowCutoff).changes;
@@ -87,6 +92,7 @@ export function runDatabaseMaintenance(
       shadowComparisonsDeleted,
       shadowPlansDeleted,
       protectionReconciliationsDeleted,
+      importedAccountSnapshotsDeleted,
     };
   })();
 }

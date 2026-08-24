@@ -1,0 +1,13 @@
+[Unit]
+Description=Export signed CrossEx account snapshot every minute
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+RandomizedDelaySec=5s
+Persistent=false
+Unit=account-snapshot-exporter.service
+
+[Install]
+WantedBy=timers.target

@@ -15,6 +15,8 @@ export interface BackendConfig {
   cloudBootstrapAdminUserId: string | null;
   bridgeAuditDir: string | null;
   protectionBookPath: string | null;
+  accountSnapshotPath: string | null;
+  accountSnapshotHmacSecret: string | null;
   host: string;
   port: number;
   dataDir: string;
@@ -125,6 +127,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
     cloudBootstrapAdminUserId,
     bridgeAuditDir: environment.GCT_BRIDGE_AUDIT_DIR?.trim() ? resolve(environment.GCT_BRIDGE_AUDIT_DIR) : null,
     protectionBookPath: environment.GCT_PROTECTION_BOOK_PATH?.trim() && (deploymentMode !== 'cloud' || resolve(environment.GCT_PROTECTION_BOOK_PATH) === '/opt/future/real-trading/runtime/protection_book.json') ? resolve(environment.GCT_PROTECTION_BOOK_PATH) : null,
+    accountSnapshotPath: environment.GCT_ACCOUNT_SNAPSHOT_FILE?.trim() && (deploymentMode !== 'cloud' || resolve(environment.GCT_ACCOUNT_SNAPSHOT_FILE) === '/opt/future/real-trading/runtime/account_snapshot.json') ? resolve(environment.GCT_ACCOUNT_SNAPSHOT_FILE) : null,
+    accountSnapshotHmacSecret: (environment.GCT_ACCOUNT_SNAPSHOT_HMAC_SECRET?.trim().length ?? 0) >= 32 ? environment.GCT_ACCOUNT_SNAPSHOT_HMAC_SECRET!.trim() : null,
     host,
     port,
     dataDir,

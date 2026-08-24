@@ -1,0 +1,27 @@
+[Unit]
+Description=Export signed read-only CrossEx account snapshot
+After=network-online.target realtrading-bridge.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/future/real-trading
+EnvironmentFile=/opt/future/real-trading/.env
+ExecStart=/opt/future/binance-exchange/.venv312/bin/python /opt/future/account-snapshot-exporter/export-signed-account-snapshot.py
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+ReadOnlyPaths=/opt/future/real-trading/Gate CrossEx
+ReadWritePaths=/opt/future/real-trading/runtime
